@@ -1,6 +1,7 @@
 {
   "name": "TDPII-SOFTWARE",
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -8,10 +9,10 @@
     "tauri:build": "tauri build"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^2.5.3",
-    "@tauri-apps/api": "^1.6.0",
-    "@tauri-apps/cli": "^1.6.3",
-    "svelte": "^4.2.20",
-    "vite": "^4.5.14"
+    "@tauri-apps/cli": "^1.3.1",
+    "@tauri-apps/api": "^1.3.1",
+    "@sveltejs/vite-plugin-svelte": "^2.0.0",
+    "vite": "^4.x.x",
+    "svelte": "^4.x.x"
   }
 }
