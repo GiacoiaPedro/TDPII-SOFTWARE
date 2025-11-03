@@ -26,22 +26,17 @@ cargo --version
 
 ## 🚀 Instalación y Configuración
 
-### 1. Clonar o Descargar el Proyecto
-```bash
-cd C:\Users\Usuario\Documents\GitHub\TDPII-SOFTWARE\esp-viewer
-```
-
-### 2. Instalar Dependencias de Node.js
+### 1. Instalar Dependencias de Node.js
 ```bash
 npm install --legacy-peer-deps
 ```
 
-### 3. Instalar Dependencias de Tauri
+### 2. Instalar Dependencias de Tauri
 ```bash
 npm install @tauri-apps/cli @tauri-apps/api --save-dev
 ```
 
-### 4. Inicializar Tauri (si es necesario)
+### 3. Inicializar Tauri (si es necesario)
 ```bash
 npx tauri init
 ```
@@ -119,14 +114,3 @@ npm install --legacy-peer-deps
 ### Ventana en Blanco
 - Verificar que los archivos Svelte estén en `src/`
 - Ejecutar `npm run dev` primero para compilar el frontend
-
-## 📞 Soporte
-
-Para problemas técnicos:
-1. Verificar que todas las dependencias estén instaladas
-2. Confirmar que la ESP32-CAM esté en la misma red
-3. Revisar la consola para mensajes de error
-
----
-
-**Desarrollado por Pedro Giacoia** - Proyecto TDPII Software
