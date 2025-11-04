@@ -23,8 +23,8 @@
 <main class="app-container">
   <div class="content">
     <header>
-      <h1>📹 ESP32-CAM Viewer</h1>
-      <p>Por Pedro Giacoia - TDPII Software</p>
+      <h1>📹 ESP32-CAM Viewer 📹</h1>
+      <p>TDPII 2025</p>
     </header>
 
     <div class="controls">
