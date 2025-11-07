@@ -1,5 +1,5 @@
 {
-  "name": "TDPII-SOFTWARE",
+  "name": "ai-viewer",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -18,3 +18,4 @@
     "vite": "^4.0.0"
   }
 }
+
