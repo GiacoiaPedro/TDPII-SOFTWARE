@@ -6,7 +6,7 @@
   let base_url = `http://${espIp}`;
 
   // ===== ESTADO DE LA APP =====
-  let streamUrl = `${base_url}/stream`;
+  let streamUrl = `${base_url}/processed_stream`;
   let isConnected = false;
   let isCalibrating = false;
   let lastUpdate = new Date();
@@ -18,23 +18,31 @@
   };
 
   // Estado de calibración
-  let figurasPosibles = [
-    { id: 0, nombre: "Cuadrado", icon: "⏹️" },
-    { id: 1, nombre: "Círculo", icon: "⏺️" },
-    { id: 2, nombre: "L", icon: "└" },
-    { id: 3, nombre: "Estrella", icon: "⭐" },
-    { id: 4, nombre: "C", icon: "⊂" }
-  ];
+let figurasPosibles = [
+  { id: 0, nombre: "Cuadrado", icon: "⬜" },
+  { id: 1, nombre: "Círculo", icon: "⚪" },
+  { id: 2, nombre: "L", icon: "🅻" },      // representa forma en ángulo, tipo "L" o esquina
+  { id: 3, nombre: "Estrella", icon: "⭐" },
+  { id: 4, nombre: "C", icon: "🅒" }       // forma semicircular como una "C"
+];
+
   
   let figurasCalibradas = [];
   let selectedFigureId = 0;
+
+  // Sistema de notificaciones
+  let notification = {
+    show: false,
+    message: '',
+    type: 'info' // 'success', 'error', 'info'
+  };
 
   // Timers
   let detectionInterval;
   let statusInterval;
 
   onMount(() => {
-    updateBaseUrl(); // Inicializar URLs
+    updateBaseUrl();
     startPolling();
   });
 
@@ -43,22 +51,18 @@
   });
 
   function updateBaseUrl() {
-    // Asegurar que no tenga slash al final
     const cleanIp = espIp.replace(/\/$/, '');
     base_url = cleanIp.startsWith('http') ? cleanIp : `http://${cleanIp}`;
     refreshStream();
   }
 
   function refreshStream() {
-    // Truco para recargar la imagen del stream si se congela
-    streamUrl = `${base_url}/stream?t=${Date.now()}`;
+    streamUrl = `${base_url}/processed_stream?t=${Date.now()}`;
   }
 
   function startPolling() {
     stopPolling();
-    // Polling rápido para detección (~200ms)
     detectionInterval = setInterval(fetchDetection, 200);
-    // Polling lento para estado general (~2s)
     statusInterval = setInterval(fetchStatus, 2000);
   }
 
@@ -77,7 +81,6 @@
       }
     } catch (e) {
       isConnected = false;
-      // No spammear errores en consola
     }
   }
 
@@ -94,36 +97,81 @@
     }
   }
 
+  // Función para mostrar notificaciones
+  function showNotification(message, type = 'info') {
+    notification = { show: true, message, type };
+    // Auto-ocultar después de 4 segundos
+    setTimeout(() => {
+      notification.show = false;
+    }, 4000);
+  }
+
   async function calibrarFigura() {
     if (isCalibrating) return;
     isCalibrating = true;
 
-    try {
-      // Usar fetch con POST y cors mode
-      const res = await fetch(`${base_url}/calibrate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain', // A veces ESP32 prefiere text/plain aunque enviemos JSON
-        },
-        body: JSON.stringify({ figure: selectedFigureId })
-      });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 segundos
 
-      if (res.ok) {
-        alert(`✅ ${figurasPosibles[selectedFigureId].nombre} calibrado correctamente`);
-        fetchStatus(); // Actualizar lista inmediatamente
-      } else {
-        throw new Error('Error en respuesta del servidor');
-      }
+    try {
+        console.log('🔧 Iniciando calibración para figura:', selectedFigureId);
+        console.log('📤 Enviando a:', `${base_url}/calibrate`);
+        
+        const res = await fetch(`${base_url}/calibrate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ figure: selectedFigureId }),
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+        
+        console.log('📡 Respuesta HTTP - Status:', res.status, res.statusText);
+        
+        const responseText = await res.text();
+        console.log('📄 Respuesta cruda:', responseText);
+        
+        if (res.ok) {
+            try {
+                const responseData = JSON.parse(responseText);
+                console.log('✅ Respuesta JSON parseada:', responseData);
+                
+                // Actualización inmediata
+                const figuraCalibrada = figurasPosibles[selectedFigureId].nombre;
+                if (!figurasCalibradas.includes(figuraCalibrada)) {
+                    figurasCalibradas = [...figurasCalibradas, figuraCalibrada];
+                }
+                
+                // ✅ REEMPLAZAR ALERT POR NOTIFICACIÓN
+                showNotification(`✅ ${figuraCalibrada} calibrado correctamente`, 'success');
+                await fetchStatus(); // Sincronizar con servidor
+            } catch (parseError) {
+                console.error('❌ Error parseando JSON:', parseError);
+                showNotification('❌ Error: Respuesta no válida del servidor', 'error');
+                throw new Error('Respuesta no es JSON válido: ' + responseText);
+            }
+        } else {
+            console.error('❌ Error del servidor. Status:', res.status, 'Texto:', responseText);
+            showNotification(`❌ Error del servidor: ${res.status}`, 'error');
+            throw new Error(`Error ${res.status}: ${responseText}`);
+        }
     } catch (e) {
-      alert('❌ Error al calibrar: ' + e.message);
+        if (e.name === 'AbortError') {
+            showNotification('❌ Timeout: La ESP32 no respondió en 8 segundos', 'error');
+        } else {
+            showNotification(`❌ Error al calibrar: ${e.message}`, 'error');
+        }
+        console.error('💥 Error en calibración:', e);
     } finally {
-      isCalibrating = false;
+        isCalibrating = false;
+        console.log('🏁 Calibración finalizada - Estado isCalibrating:', isCalibrating);
     }
   }
 
   // Formatear porcentaje para la UI
   $: confianzaPorcentaje = (detectionData.confianza * 100).toFixed(1);
-  // Color dinámico según confianza
   $: confianzaColor = detectionData.confianza > 0.8 ? '#4ade80' : 
                       detectionData.confianza > 0.5 ? '#facc15' : '#ef4444';
 
@@ -141,12 +189,19 @@
     </div>
   </header>
 
+  <!-- ✅ SISTEMA DE NOTIFICACIONES -->
+  {#if notification.show}
+    <div class="notification {notification.type}">
+      {notification.message}
+    </div>
+  {/if}
+
   <div class="grid-layout">
     <div class="panel stream-panel">
-      <h2>Transmisión en Vivo</h2>
+      <h2>Stream Procesado (Binario)</h2>
       <div class="video-container">
         {#if isConnected}
-          <img src={streamUrl} alt="Esperando stream..." />
+          <img src={streamUrl} alt="Stream procesado en tiempo real" />
         {:else}
           <div class="placeholder">
             <p>💤 Esperando conexión con {espIp}...</p>
@@ -155,6 +210,7 @@
       </div>
       <div class="stream-info">
         <small>Última actualización: {lastUpdate.toLocaleTimeString()}</small>
+        <small>Vista: Imagen binaria procesada</small>
       </div>
     </div>
 
@@ -189,7 +245,6 @@
             {#each figurasPosibles as fig}
               <option value={fig.id}>
                 {fig.icon} {fig.nombre} 
-                {figurasCalibradas.includes(fig.nombre) ? '(✅ Calibrado)' : '(❌ Sin calibrar)'}
               </option>
             {/each}
           </select>
@@ -232,6 +287,7 @@
     max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
+    position: relative;
   }
 
   header {
@@ -272,6 +328,7 @@
     color: #fff;
     padding: 5px 10px;
     border-radius: 4px;
+    width: 150px;
   }
 
   .grid-layout {
@@ -314,7 +371,7 @@
   .video-container img {
     width: 100%;
     height: 100%;
-    object-fit: contain; /* Mantiene proporción sin estirar */
+    object-fit: contain;
   }
 
   .placeholder {
@@ -433,5 +490,54 @@
     background: #4cc9f022;
     color: #4cc9f0;
     border-color: #4cc9f0;
+  }
+
+  .stream-info {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: #888;
+  }
+
+  /* ✅ ESTILOS PARA NOTIFICACIONES */
+  .notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    border-radius: 8px;
+    color: white;
+    font-weight: bold;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    animation: slideIn 0.3s ease-out;
+    max-width: 300px;
+  }
+
+  .notification.success {
+    background: #22c55e;
+    border-left: 4px solid #16a34a;
+  }
+
+  .notification.error {
+    background: #ef4444;
+    border-left: 4px solid #dc2626;
+  }
+
+  .notification.info {
+    background: #3b82f6;
+    border-left: 4px solid #2563eb;
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
   }
 </style>
