@@ -1,278 +1,189 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
 
-  // ===== CONFIGURACIÓN =====
-  let espIp = '192.168.1.84';
-  let base_url = `http://${espIp}`;
+  const base_url = "http://192.168.1.84";
+  let figurasPosibles = [
+      { id: 0, nombre: "Cuadrado", icon: "⬜" },
+      { id: 1, nombre: "Círculo", icon: "⚪" },
+      { id: 2, nombre: "L", icon: "🅻" },      // representa forma en ángulo, tipo "L" o esquina
+      { id: 3, nombre: "Estrella", icon: "⭐" },
+      { id: 4, nombre: "C", icon: "🅒" }       // forma semicircular como una "C"
+      ];
 
-  // ===== ESTADO DE LA APP =====
-  let streamUrl = `${base_url}/processed_stream`;
+  let selectedFigureId = 0;
+  let figurasCalibradas = [];
+  let detectionData = {};
+  let lastUpdate = null;
   let isConnected = false;
   let isCalibrating = false;
-  let lastUpdate = new Date();
-  
-  // Datos de detección
-  let detectionData = {
-    figura: "Esperando...",
-    confianza: 0
-  };
-
-  // Estado de calibración
-let figurasPosibles = [
-  { id: 0, nombre: "Cuadrado", icon: "⬜" },
-  { id: 1, nombre: "Círculo", icon: "⚪" },
-  { id: 2, nombre: "L", icon: "🅻" },      // representa forma en ángulo, tipo "L" o esquina
-  { id: 3, nombre: "Estrella", icon: "⭐" },
-  { id: 4, nombre: "C", icon: "🅒" }       // forma semicircular como una "C"
-];
-
-  
-  let figurasCalibradas = [];
-  let selectedFigureId = 0;
-
-  // Sistema de notificaciones
-  let notification = {
-    show: false,
-    message: '',
-    type: 'info' // 'success', 'error', 'info'
-  };
-
-  // Timers
   let detectionInterval;
   let statusInterval;
+  let notification = { text: "", type: "" };
 
-  onMount(() => {
-    updateBaseUrl();
-    startPolling();
-  });
+  let fetchInProgress = false; // 🔒 evita solapamientos
 
-  onDestroy(() => {
-    stopPolling();
-  });
-
-  function updateBaseUrl() {
-    const cleanIp = espIp.replace(/\/$/, '');
-    base_url = cleanIp.startsWith('http') ? cleanIp : `http://${cleanIp}`;
-    refreshStream();
+  // --- Notificación visual ---
+  function showNotification(text, type) {
+    notification = { text, type };
+    setTimeout(() => (notification = { text: "", type: "" }), 4000);
   }
 
-  function refreshStream() {
-    streamUrl = `${base_url}/processed_stream?t=${Date.now()}`;
+  // --- Estado ---
+  async function fetchStatus() {
+    try {
+      const res = await fetch(`${base_url}/status`);
+      if (res.ok) {
+        const data = await res.json();
+        figurasCalibradas = data.calibradas || [];
+        isConnected = true;
+      } else isConnected = false;
+    } catch {
+      isConnected = false;
+    }
   }
 
-  function startPolling() {
-    stopPolling();
-    detectionInterval = setInterval(fetchDetection, 200);
-    statusInterval = setInterval(fetchStatus, 2000);
-  }
-
-  function stopPolling() {
-    clearInterval(detectionInterval);
-    clearInterval(statusInterval);
-  }
-
+  // --- Detección ---
   async function fetchDetection() {
+    if (fetchInProgress) return;
+    fetchInProgress = true;
     try {
       const res = await fetch(`${base_url}/detect`);
       if (res.ok) {
         detectionData = await res.json();
         lastUpdate = new Date();
         isConnected = true;
-      }
-    } catch (e) {
+      } else isConnected = false;
+    } catch {
       isConnected = false;
-    }
-  }
-
-  async function fetchStatus() {
-    try {
-      const res = await fetch(`${base_url}/status`);
-      if (res.ok) {
-        const data = await res.json();
-        figurasCalibradas = data.figuras_calibradas || [];
-        isConnected = true;
-      }
-    } catch (e) {
-      isConnected = false;
-    }
-  }
-
-  // Función para mostrar notificaciones
-  function showNotification(message, type = 'info') {
-    notification = { show: true, message, type };
-    // Auto-ocultar después de 4 segundos
-    setTimeout(() => {
-      notification.show = false;
-    }, 4000);
-  }
-
-  async function calibrarFigura() {
-    if (isCalibrating) return;
-    isCalibrating = true;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 segundos
-
-    try {
-        console.log('🔧 Iniciando calibración para figura:', selectedFigureId);
-        console.log('📤 Enviando a:', `${base_url}/calibrate`);
-        
-        const res = await fetch(`${base_url}/calibrate`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ figure: selectedFigureId }),
-            signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-        
-        console.log('📡 Respuesta HTTP - Status:', res.status, res.statusText);
-        
-        const responseText = await res.text();
-        console.log('📄 Respuesta cruda:', responseText);
-        
-        if (res.ok) {
-            try {
-                const responseData = JSON.parse(responseText);
-                console.log('✅ Respuesta JSON parseada:', responseData);
-                
-                // Actualización inmediata
-                const figuraCalibrada = figurasPosibles[selectedFigureId].nombre;
-                if (!figurasCalibradas.includes(figuraCalibrada)) {
-                    figurasCalibradas = [...figurasCalibradas, figuraCalibrada];
-                }
-                
-                // ✅ REEMPLAZAR ALERT POR NOTIFICACIÓN
-                showNotification(`✅ ${figuraCalibrada} calibrado correctamente`, 'success');
-                await fetchStatus(); // Sincronizar con servidor
-            } catch (parseError) {
-                console.error('❌ Error parseando JSON:', parseError);
-                showNotification('❌ Error: Respuesta no válida del servidor', 'error');
-                throw new Error('Respuesta no es JSON válido: ' + responseText);
-            }
-        } else {
-            console.error('❌ Error del servidor. Status:', res.status, 'Texto:', responseText);
-            showNotification(`❌ Error del servidor: ${res.status}`, 'error');
-            throw new Error(`Error ${res.status}: ${responseText}`);
-        }
-    } catch (e) {
-        if (e.name === 'AbortError') {
-            showNotification('❌ Timeout: La ESP32 no respondió en 8 segundos', 'error');
-        } else {
-            showNotification(`❌ Error al calibrar: ${e.message}`, 'error');
-        }
-        console.error('💥 Error en calibración:', e);
     } finally {
-        isCalibrating = false;
-        console.log('🏁 Calibración finalizada - Estado isCalibrating:', isCalibrating);
+      fetchInProgress = false;
     }
   }
 
-  // Formatear porcentaje para la UI
-  $: confianzaPorcentaje = (detectionData.confianza * 100).toFixed(1);
-  $: confianzaColor = detectionData.confianza > 0.8 ? '#4ade80' : 
-                      detectionData.confianza > 0.5 ? '#facc15' : '#ef4444';
+  // --- Polling ---
+  function startPolling() {
+    stopPolling();
+    detectionInterval = setInterval(fetchDetection, 500);
+    statusInterval = setInterval(fetchStatus, 2000);
+  }
+  function stopPolling() {
+    clearInterval(detectionInterval);
+    clearInterval(statusInterval);
+  }
 
+async function calibrarFigura() {
+  isCalibrating = true;
+  stopPolling(); // 🔹 esto ya detiene fetchDetection() y fetchStatus()
+  
+  // 🔹 además, pausamos el video stream:
+  const imgElement = document.querySelector('.video-container img');
+  if (imgElement) imgElement.src = ''; // corta la conexión de stream
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const res = await fetch(`${base_url}/calibrate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ figure: selectedFigureId }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+    const text = await res.text();
+
+    if (res.ok) {
+      JSON.parse(text);
+      const figName = figurasPosibles[selectedFigureId].nombre;
+      if (!figurasCalibradas.includes(figName))
+        figurasCalibradas = [...figurasCalibradas, figName];
+
+      showNotification(`✅ ${figName} calibrado correctamente`, "success");
+      await fetchStatus();
+    } else {
+      showNotification(`❌ Error del servidor (${res.status})`, "error");
+    }
+  } catch (e) {
+    if (e.name === "AbortError")
+      showNotification("❌ Timeout: sin respuesta de la ESP32", "error");
+    else showNotification(`❌ Error: ${e.message}`, "error");
+  } finally {
+    // 🔹 restaurar el stream
+    if (imgElement) imgElement.src = `${base_url}/processed_stream`;
+    isCalibrating = false;
+    startPolling();
+  }
+}
+
+
+
+  onMount(() => startPolling());
 </script>
 
 <main class="container">
   <header>
-    <h1>👁️ ESP32 Vision System</h1>
-    <div class="connection-bar" class:connected={isConnected}>
-      <span>Estado: {isConnected ? 'CONECTADO' : 'DESCONECTADO'}</span>
-      <div class="ip-config">
-        <input type="text" bind:value={espIp} on:change={updateBaseUrl} placeholder="IP del ESP32" />
-        <button on:click={refreshStream} title="Recargar Stream">🔄</button>
-      </div>
+    <h1>Calibración de figuras</h1>
+    <div class="connection-bar {isConnected ? 'connected' : ''}">
+      <span>{isConnected ? "🟢 Conectado" : "🔴 Desconectado"}</span>
+      <span>
+        Última actualización:
+        {#if lastUpdate}{lastUpdate.toLocaleTimeString()}{:else}(sin datos){/if}
+      </span>
     </div>
   </header>
 
-  <!-- ✅ SISTEMA DE NOTIFICACIONES -->
-  {#if notification.show}
-    <div class="notification {notification.type}">
-      {notification.message}
-    </div>
-  {/if}
-
   <div class="grid-layout">
-    <div class="panel stream-panel">
-      <h2>Stream Procesado (Binario)</h2>
+    <div class="panel">
+      <h2>Detección actual</h2>
       <div class="video-container">
         {#if isConnected}
-          <img src={streamUrl} alt="Stream procesado en tiempo real" />
+          <img src={`${base_url}/processed_stream`} alt="Video stream" />
         {:else}
-          <div class="placeholder">
-            <p>💤 Esperando conexión con {espIp}...</p>
-          </div>
+          <div class="placeholder">Conectando con la cámara...</div>
         {/if}
       </div>
       <div class="stream-info">
-        <small>Última actualización: {lastUpdate.toLocaleTimeString()}</small>
-        <small>Vista: Imagen binaria procesada</small>
+        <span>IP: 192.168.1.84 </span>
+        <span>Polling activo cada 500 ms</span>
       </div>
     </div>
 
-    <div class="controls-column">
-      
-      <div class="panel detection-panel">
-        <h2>🎯 Detección Actual</h2>
-        <div class="detection-result">
-          <span class="label">Figura:</span>
-          <span class="value figure-name">{detectionData.figura}</span>
-        </div>
-        
-        <div class="confidence-meter">
-          <div class="label">
-            <span>Confianza</span>
-            <span>{confianzaPorcentaje}%</span>
-          </div>
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" 
-                 style="width: {confianzaPorcentaje}%; background-color: {confianzaColor}">
-            </div>
-          </div>
-        </div>
+    <div class="panel controls-column">
+      <h2>Calibrar figura</h2>
+      <div class="instructions">
+        Seleccioná una figura y asegurate que la cámara la vea claramente.
+      </div>
+      <div class="calibration-form">
+        <select bind:value={selectedFigureId}>
+          {#each figurasPosibles as f}
+            <option value={f.id}>{f.icon} {f.nombre}</option>
+          {/each}
+        </select>
+
+        <button
+          class="calibrate-btn {isCalibrating ? 'loading' : ''}"
+          on:click={calibrarFigura}
+          disabled={isCalibrating || !isConnected}
+        >
+          {isCalibrating ? "Calibrando..." : "Calibrar"}
+        </button>
       </div>
 
-      <div class="panel calibration-panel">
-        <h2>⚙️ Calibración</h2>
-        <p class="instructions">Coloca una figura frente a la cámara y selecciona cuál es para entrenar el sistema.</p>
-        
-        <div class="calibration-form">
-          <select bind:value={selectedFigureId} disabled={isCalibrating}>
-            {#each figurasPosibles as fig}
-              <option value={fig.id}>
-                {fig.icon} {fig.nombre} 
-              </option>
-            {/each}
-          </select>
-          
-          <button 
-            class="calibrate-btn" 
-            class:loading={isCalibrating}
-            disabled={!isConnected || isCalibrating}
-            on:click={calibrarFigura}
-          >
-            {isCalibrating ? 'Calibrando...' : '📸 CALIBRAR AHORA'}
-          </button>
-        </div>
-
-        <div class="calibrated-list">
-          <h3>Estado del Sistema:</h3>
-          <div class="tags">
-            {#each figurasPosibles as fig}
-              <span class="tag" class:active={figurasCalibradas.includes(fig.nombre)}>
-                {fig.icon} {fig.nombre}
-              </span>
-            {/each}
-          </div>
-        </div>
+      <h3>Figuras calibradas</h3>
+      <div class="tags">
+        {#each figurasPosibles as f}
+          <span class="tag {figurasCalibradas.includes(f.nombre) ? 'active' : ''}">
+            {f.icon} {f.nombre}
+          </span>
+        {/each}
       </div>
-
     </div>
   </div>
+
+  {#if notification.text}
+    <div class="notification {notification.type}">{notification.text}</div>
+  {/if}
 </main>
 
 <style>
