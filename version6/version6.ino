@@ -160,18 +160,6 @@ void aplicar_dilatacion(uint8_t* src, uint8_t* dst, int width, int height) {
     }
 }
 
-// ---- Apertura (erosión seguida de dilatación) para eliminar ruido fino ----
-void aplicar_apertura(uint8_t* src, uint8_t* tmp, uint8_t* dst, int width, int height) {
-    aplicar_erosion(src, tmp, width, height);
-    aplicar_dilatacion(tmp, dst, width, height);
-}
-
-// ---- Cierre (dilatación seguida de erosión) opcional para rellenar huecos ----
-void aplicar_cierre(uint8_t* src, uint8_t* tmp, uint8_t* dst, int width, int height) {
-    aplicar_dilatacion(src, tmp, width, height);
-    aplicar_erosion(tmp, dst, width, height);
-}
-
 // ===== FUNCIONES HU MOMENTS MEJORADAS =====
 void calcular_momentos_hu_mejorado(uint8_t* imagen_binaria, int width, int height, double hu[7]) {
     double area = 0;
@@ -338,128 +326,115 @@ static esp_err_t status_handler(httpd_req_t *req) {
     return httpd_resp_send(req, response.c_str(), response.length());
 }
 
-// Endpoint: /processed_stream - FALTABA ESTA DEFINICIÓN
 static esp_err_t processed_stream_handler(httpd_req_t *req) {
     camera_fb_t *fb = NULL;
     esp_err_t res = ESP_OK;
-    char figura[20];
-    double confianza = 0;
+    char figura[20] = "Ninguna";
+    double confianza = 0.0;
     
-    Serial.println("Processed stream started - Sending processed images");
+    Serial.println("Processed stream started - Optimized real version");
     
     res = httpd_resp_set_type(req, "multipart/x-mixed-replace; boundary=frame");
     if(res != ESP_OK) return res;
-    
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    // Buffers que sí existen
+    uint8_t* grayscale = NULL;
+    size_t grayscale_len = 0;
+    bool buffers_initialized = false;
 
     while(true) {
         fb = esp_camera_fb_get();
         if (!fb) {
-            delay(10);
+            delay(1);
             continue;
         }
 
-        // Procesamiento de imagen para detección
-        uint8_t* grayscale = nullptr;
-        size_t grayscale_len = fb->width * fb->height;
-        uint8_t* jpg_buffer = nullptr;
-        size_t jpg_len = 0;
-        
-        if (fb->format == PIXFORMAT_JPEG && imagen_procesada) {
-            size_t rgb565_len = grayscale_len * 2; 
-            uint8_t* rgb565 = (uint8_t*)ps_malloc(rgb565_len);
-            if (rgb565) {
-                bool ok = jpg2rgb565(fb->buf, fb->len, rgb565, JPG_SCALE_NONE);
-                if (ok) {
-                    grayscale = (uint8_t*)ps_malloc(grayscale_len);
-                    if (grayscale) {
-                        uint16_t* pixels = (uint16_t*)rgb565;
-                        for (int i = 0; i < grayscale_len; i++) {
-                            uint16_t pixel = pixels[i];
-                            uint8_t r = ((pixel >> 11) & 0x1F) << 3; 
-                            uint8_t g = ((pixel >> 5) & 0x3F) << 2;
-                            uint8_t b = (pixel & 0x1F) << 3;
-                            grayscale[i] = (uint8_t)(0.299 * r + 0.587 * g + 0.114 * b);
-                        }
-                        
-                        // Aplicar filtros
-                        aplicar_blur(grayscale, imagen_procesada, fb->width, fb->height);
-                        aplicar_binarizacion(imagen_procesada, grayscale, fb->width, fb->height, threshold_value);
-                        aplicar_erosion(grayscale, imagen_procesada, fb->width, fb->height);
-                        aplicar_dilatacion(imagen_procesada, grayscale, fb->width, fb->height);
-                        
-                        // Detectar figura
-                        detectar_figura(grayscale, fb->width, fb->height, figura, &confianza);
-                        
-                        // CONVERTIR IMAGEN PROCESADA (binaria) A JPEG
-                        bool jpeg_ok = fmt2jpg(grayscale, grayscale_len, fb->width, fb->height, PIXFORMAT_GRAYSCALE, 80, &jpg_buffer, &jpg_len);
-                        
-                        if (jpeg_ok && jpg_buffer != nullptr) {
-                            // Enviar frame procesado como JPEG
-                            if(res == ESP_OK) {
-                                res = httpd_resp_send_chunk(req, "--frame\r\n", 10);
-                            }
-                            if(res == ESP_OK) {
-                                res = httpd_resp_send_chunk(req, "Content-Type: image/jpeg\r\n\r\n", 28);
-                            }
-                            if(res == ESP_OK) {
-                                res = httpd_resp_send_chunk(req, (const char*)jpg_buffer, jpg_len);
-                            }
-                            if(res == ESP_OK) {
-                                // Enviar metadata de detección
-                                char metadata[100];
-                                snprintf(metadata, sizeof(metadata), 
-                                        "\r\nX-Detection-Data: {\"figura\":\"%s\",\"confianza\":%.2f}\r\n", 
-                                        figura, confianza);
-                                res = httpd_resp_send_chunk(req, metadata, strlen(metadata));
-                            }
-                            
-                            free(jpg_buffer);
-                        } else {
-                            // Fallback: enviar frame original si falla la conversión
-                            if(res == ESP_OK) {
-                                res = httpd_resp_send_chunk(req, "--frame\r\n", 10);
-                            }
-                            if(res == ESP_OK) {
-                                res = httpd_resp_send_chunk(req, "Content-Type: image/jpeg\r\n\r\n", 28);
-                            }
-                            if(res == ESP_OK) {
-                                res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
-                            }
-                        }
-                    }
-                }
-                free(rgb565);
-            }
-        } else {
-            // Fallback para formato no JPEG
-            if(res == ESP_OK) {
-                res = httpd_resp_send_chunk(req, "--frame\r\n", 10);
-            }
-            if(res == ESP_OK) {
-                res = httpd_resp_send_chunk(req, "Content-Type: image/jpeg\r\n\r\n", 28);
-            }
-            if(res == ESP_OK) {
-                res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
+        // Inicializar buffers una sola vez
+        if (!buffers_initialized) {
+            grayscale_len = fb->width * fb->height;
+            grayscale = (uint8_t*)ps_malloc(grayscale_len);
+            if (grayscale) {
+                buffers_initialized = true;
             }
         }
 
-        // Liberar memoria
-        if (grayscale != nullptr && grayscale != fb->buf) {
-            free(grayscale);
+        if (fb->format == PIXFORMAT_JPEG && buffers_initialized && imagen_procesada) {
+            size_t rgb_len = fb->width * fb->height * 2;
+            uint8_t* rgb_buffer = (uint8_t*)ps_malloc(rgb_len);
+            
+            if (rgb_buffer && jpg2rgb565(fb->buf, fb->len, rgb_buffer, JPG_SCALE_NONE)) {
+                // Conversión RGB565 a Grayscale (esta parte SÍ existe)
+                uint16_t* pixels = (uint16_t*)rgb_buffer;
+                for (int i = 0; i < grayscale_len; i++) {
+                    uint16_t pixel = pixels[i];
+                    uint8_t r = ((pixel >> 11) & 0x1F) << 3;
+                    uint8_t g = ((pixel >> 5) & 0x3F) << 2;
+                    uint8_t b = (pixel & 0x1F) << 3;
+                    grayscale[i] = (uint8_t)(0.299 * r + 0.587 * g + 0.114 * b);
+                }
+
+                // 🔥 OPTIMIZACIÓN: Reducir procesamiento
+                // Aplicar solo binarización (la más importante)
+                aplicar_binarizacion(grayscale, grayscale, fb->width, fb->height, threshold_value);
+                
+                // 🔥 Detección cada 5 frames (no cada frame)
+                static int frame_count = 0;
+                if (frame_count++ % 5 == 0) {
+                    detectar_figura(grayscale, fb->width, fb->height, figura, &confianza);
+                }
+
+                // Convertir a JPEG
+                size_t jpg_len = 0;
+                uint8_t* jpg_buffer = NULL;
+                
+                if (fmt2jpg(grayscale, grayscale_len, fb->width, fb->height, 
+                           PIXFORMAT_GRAYSCALE, 60, &jpg_buffer, &jpg_len)) {  // 🔥 Calidad más baja
+                    
+                    // Enviar frame
+                    if(res == ESP_OK) res = httpd_resp_send_chunk(req, "--frame\r\n", 10);
+                    if(res == ESP_OK) res = httpd_resp_send_chunk(req, "Content-Type: image/jpeg\r\n\r\n", 28);
+                    if(res == ESP_OK) res = httpd_resp_send_chunk(req, (const char*)jpg_buffer, jpg_len);
+                    
+                    // Metadata
+                    char metadata[100];
+                    snprintf(metadata, sizeof(metadata), 
+                            "\r\nX-Detection-Data: {\"figura\":\"%s\",\"confianza\":%.2f}\r\n", 
+                            figura, confianza);
+                    if(res == ESP_OK) res = httpd_resp_send_chunk(req, metadata, strlen(metadata));
+                    
+                    free(jpg_buffer);
+                } else {
+                    send_fallback_frame(req, fb);
+                }
+                
+                free(rgb_buffer);
+            } else {
+                if (rgb_buffer) free(rgb_buffer);
+                send_fallback_frame(req, fb);
+            }
+        } else {
+            // Frame original sin procesar
+            send_fallback_frame(req, fb);
         }
+
         esp_camera_fb_return(fb);
         
-        if(res != ESP_OK) {
-            break;
-        }
-        
-        // Delay para ~5-8 FPS
-        delay(50);
+        if(res != ESP_OK) break;
     }
     
+    // Limpieza
+    if (grayscale) free(grayscale);
     Serial.println("Processed stream ended");
     return res;
+}
+
+// 🔥 Función auxiliar REAL para enviar frames de fallback
+static void send_fallback_frame(httpd_req_t *req, camera_fb_t *fb) {
+    httpd_resp_send_chunk(req, "--frame\r\n", 10);
+    httpd_resp_send_chunk(req, "Content-Type: image/jpeg\r\n\r\n", 28);
+    httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
+    httpd_resp_send_chunk(req, "\r\n", 2);
 }
 
 // Endpoint: /calibrate (POST) - COMPATIBLE CON SVELTE
