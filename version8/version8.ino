@@ -41,6 +41,8 @@ bool calibrating = false;
 int current_calibration_figure = -1;
 int photo_count = 0;
 uint8_t threshold_value = 70;
+char ultima_figura[20] = "Ninguna";
+double ultima_confianza = 0.0;
 
 // Buffer para imagen procesada
 uint8_t* imagen_procesada = nullptr;
@@ -382,6 +384,8 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                 static int frame_count = 0;
                 if (frame_count++ % 5 == 0) {
                     detectar_figura(grayscale, fb->width, fb->height, figura, &confianza);
+                    strncpy(ultima_figura, figura, 19);
+                    ultima_confianza = confianza;
                 }
 
                 // Convertir a JPEG
@@ -443,8 +447,6 @@ static esp_err_t calibrate_handler(httpd_req_t *req) {
     Serial.printf("Heap libre antes: %d bytes\n", esp_get_free_heap_size());
     // ✅ CONFIGURAR CORS AL INICIO (para todos los casos)
     set_cors_headers(req);
-    
-    Serial.println("✅ Pedido de calibración recibido");
 
     // ✅ MANEJAR PREFLIGHT OPTIONS EXPLÍCITAMENTE
     if (req->method == HTTP_OPTIONS) {
@@ -584,6 +586,12 @@ static esp_err_t calibrate_handler(httpd_req_t *req) {
         response_doc["status"] = "ok";
         response_doc["figure_id"] = figure_id;
         response_doc["figure_name"] = figuras_calibradas[figure_id].nombre;
+        Serial.println("Figuras calibradas:");
+        for (int i = 0; i < 5; i++) {
+            if (figuras_calibradas[i].calibrada) {
+                Serial.printf(" - %s\n", figuras_calibradas[i].nombre);
+            }
+        }
         response_doc["message"] = "Calibración exitosa";
         Serial.printf("✅ Calibración exitosa para: %s\n", figuras_calibradas[figure_id].nombre);
     } else {
@@ -598,65 +606,21 @@ static esp_err_t calibrate_handler(httpd_req_t *req) {
     Serial.printf("📤 Enviando respuesta: %s\n", response.c_str());
     
     httpd_resp_set_type(req, "application/json");
+
+    
+    Serial.printf("Heap libre despues: %d bytes\n", esp_get_free_heap_size());
     Serial.println("====== Fin calibración ======\n");
     return httpd_resp_send(req, response.c_str(), response.length());
 }
 
-// Endpoint: /detect (GET) - Compatible con Svelte
 static esp_err_t detect_handler(httpd_req_t *req) {
     set_cors_headers(req);
     
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (!fb) {
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
-    
+
+
     StaticJsonDocument<200> doc;
-    char figura[20];
-    double confianza = 0;
-    
-    uint8_t* grayscale = nullptr;
-    size_t grayscale_len = fb->width * fb->height;
-    
-    if (fb->format == PIXFORMAT_JPEG && imagen_procesada) {
-        size_t rgb565_len = grayscale_len * 2; 
-        uint8_t* rgb565 = (uint8_t*)ps_malloc(rgb565_len);
-        if (rgb565) {
-            bool ok = jpg2rgb565(fb->buf, fb->len, rgb565, JPG_SCALE_NONE);
-            if (ok) {
-                grayscale = (uint8_t*)ps_malloc(grayscale_len);
-                if (grayscale) {
-                    uint16_t* pixels = (uint16_t*)rgb565;
-                    for (int i = 0; i < grayscale_len; i++) {
-                        uint16_t pixel = pixels[i];
-                        uint8_t r = ((pixel >> 11) & 0x1F) << 3; 
-                        uint8_t g = ((pixel >> 5) & 0x3F) << 2;
-                        uint8_t b = (pixel & 0x1F) << 3;
-                        grayscale[i] = (uint8_t)(0.299 * r + 0.587 * g + 0.114 * b);
-                    }
-                    
-                    // Aplicar filtros
-                    aplicar_blur(grayscale, imagen_procesada, fb->width, fb->height);
-                    aplicar_binarizacion(imagen_procesada, grayscale, fb->width, fb->height, threshold_value);
-                    aplicar_erosion(grayscale, imagen_procesada, fb->width, fb->height);
-                    aplicar_dilatacion(imagen_procesada, grayscale, fb->width, fb->height);
-                    
-                    // Detectar figura
-                    detectar_figura(grayscale, fb->width, fb->height, figura, &confianza);
-                    
-                    doc["figura"] = figura;
-                    doc["confianza"] = confianza;
-                }
-            }
-            free(rgb565);
-        }
-    }
-    
-    if (grayscale != nullptr && grayscale != fb->buf) {
-        free(grayscale);
-    }
-    esp_camera_fb_return(fb);
+    doc["figura"] = ultima_figura;
+    doc["confianza"] = ultima_confianza;
     
     String response;
     serializeJson(doc, response);

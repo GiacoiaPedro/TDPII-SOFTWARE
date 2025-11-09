@@ -5,22 +5,22 @@
   let figurasPosibles = [
       { id: 0, nombre: "Cuadrado", icon: "⬜" },
       { id: 1, nombre: "Círculo", icon: "⚪" },
-      { id: 2, nombre: "L", icon: "🅻" },      // representa forma en ángulo, tipo "L" o esquina
+      { id: 2, nombre: "L", icon: "🅻" },
       { id: 3, nombre: "Estrella", icon: "⭐" },
-      { id: 4, nombre: "C", icon: "🅒" }       // forma semicircular como una "C"
+      { id: 4, nombre: "C", icon: "🅒" }
       ];
-
+  let detectionData = { figura: "Ninguna", confianza: 0 };
   let selectedFigureId = 0;
   let figurasCalibradas = [];
-  let detectionData = {};
   let lastUpdate = null;
   let isConnected = false;
   let isCalibrating = false;
-  let detectionInterval;
-  let statusInterval;
+  let pollingActive = false;
   let notification = { text: "", type: "" };
 
-  let fetchInProgress = false; // 🔒 evita solapamientos
+  let fetchInProgress = false;
+  let requestCount = 0;
+  let lastRequestTime = null;
 
   // --- Notificación visual ---
   function showNotification(text, type) {
@@ -36,89 +36,128 @@
         const data = await res.json();
         figurasCalibradas = data.calibradas || [];
         isConnected = true;
-      } else isConnected = false;
+      } else {
+        isConnected = false;
+      }
     } catch {
       isConnected = false;
     }
   }
 
-  // --- Detección ---
+  // --- Detección CON SETTIMEOUT RECURSIVO ---
   async function fetchDetection() {
-    if (fetchInProgress) return;
-    fetchInProgress = true;
+    if (!pollingActive) {
+      console.log('⏹️ Polling desactivado, deteniendo...');
+      return;
+    }
+    
+    // 🔥 ELIMINAR LA VERIFICACIÓN DE fetchInProgress - dejar que se encolen
+    requestCount++;
+    lastRequestTime = new Date();
+    
     try {
-      const res = await fetch(`${base_url}/detect`);
-      if (res.ok) {
-        detectionData = await res.json();
-        lastUpdate = new Date();
-        isConnected = true;
-      } else isConnected = false;
-    } catch {
+      const startTime = Date.now();
+      const res = await fetch(`${base_url}/detect?_t=${Date.now()}`);
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      
+      const data = await res.json();
+      const endTime = Date.now();
+      
+      detectionData = data;
+      lastUpdate = new Date();
+      isConnected = true;
+      
+      console.log(`✅ [${requestCount}] ${data.figura} (${(data.confianza * 100).toFixed(1)}%) en ${endTime - startTime}ms`);
+      
+    } catch (error) {
       isConnected = false;
-    } finally {
-      fetchInProgress = false;
+      detectionData = { figura: "Ninguna", confianza: 0 };
+      console.error(`💥 [${requestCount}] Error:`, error.message);
+    }
+    
+    // 🔥 PROGRAMAR SIGUIENTE REQUEST 500ms DESPUÉS DEL INICIO DE ESTA
+    // Esto asegura un intervalo constante de ~500ms entre inicios
+    if (pollingActive) {
+      setTimeout(fetchDetection, 500);
     }
   }
 
-  // --- Polling ---
+  // --- Polling MEJORADO ---
   function startPolling() {
-    stopPolling();
-    detectionInterval = setInterval(fetchDetection, 500);
-    statusInterval = setInterval(fetchStatus, 2000);
+    console.log('🔄 START POLLING');
+    pollingActive = true;
+    requestCount = 0; // Reset counter
+    
+    // Iniciar detección inmediatamente
+    fetchDetection();
+    
+    // Status cada 2 segundos
+    const pollStatus = () => {
+      if (pollingActive) {
+        fetchStatus();
+        setTimeout(pollStatus, 2000);
+      }
+    };
+    pollStatus();
+    
+    console.log('📡 Polling recursivo iniciado - 500ms entre requests');
   }
-  function stopPolling() {
-    clearInterval(detectionInterval);
-    clearInterval(statusInterval);
-  }
-
-async function calibrarFigura() {
-  isCalibrating = true;
-  stopPolling(); // 🔹 esto ya detiene fetchDetection() y fetchStatus()
   
-  // 🔹 además, pausamos el video stream:
-  const imgElement = document.querySelector('.video-container img');
-  if (imgElement) imgElement.src = ''; // corta la conexión de stream
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const res = await fetch(`${base_url}/calibrate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ figure: selectedFigureId }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-    const text = await res.text();
-
-    if (res.ok) {
-      JSON.parse(text);
-      const figName = figurasPosibles[selectedFigureId].nombre;
-      if (!figurasCalibradas.includes(figName))
-        figurasCalibradas = [...figurasCalibradas, figName];
-
-      showNotification(`✅ ${figName} calibrado correctamente`, "success");
-      await fetchStatus();
-    } else {
-      showNotification(`❌ Error del servidor (${res.status})`, "error");
-    }
-  } catch (e) {
-    if (e.name === "AbortError")
-      showNotification("❌ Timeout: sin respuesta de la ESP32", "error");
-    else showNotification(`❌ Error: ${e.message}`, "error");
-  } finally {
-    // 🔹 restaurar el stream
-    if (imgElement) imgElement.src = `${base_url}/processed_stream`;
-    isCalibrating = false;
-    startPolling();
+  function stopPolling() {
+    console.log('⏹️ STOP POLLING');
+    pollingActive = false;
   }
-}
 
+  async function calibrarFigura() {
+    isCalibrating = true;
+    stopPolling();
+    
+    const imgElement = document.querySelector('.video-container img');
+    if (imgElement) imgElement.src = '';
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-  onMount(() => startPolling());
+    try {
+      const res = await fetch(`${base_url}/calibrate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ figure: selectedFigureId }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      const text = await res.text();
+
+      if (res.ok) {
+        JSON.parse(text);
+        const figName = figurasPosibles[selectedFigureId].nombre;
+        if (!figurasCalibradas.includes(figName))
+          figurasCalibradas = [...figurasCalibradas, figName];
+
+        showNotification(`✅ ${figName} calibrado correctamente`, "success");
+        await fetchStatus();
+      } else {
+        showNotification(`❌ Error del servidor (${res.status})`, "error");
+      }
+    } catch (e) {
+      if (e.name === "AbortError")
+        showNotification("❌ Timeout: sin respuesta de la ESP32", "error");
+      else showNotification(`❌ Error: ${e.message}`, "error");
+    } finally {
+      if (imgElement) imgElement.src = `${base_url}/processed_stream`;
+      isCalibrating = false;
+      startPolling();
+    }
+  }
+
+  onMount(() => {
+    console.log('🚀 Componente montado');
+    startPolling();
+  });
 </script>
 
 <main class="container">
@@ -133,6 +172,13 @@ async function calibrarFigura() {
     </div>
   </header>
 
+  <!-- PANEL DE DIAGNÓSTICO -->
+  <div class="debug-panel">
+    <div><strong>Requests:</strong> {requestCount}</div>
+    <div><strong>Última:</strong> {detectionData.figura} ({(detectionData.confianza * 100).toFixed(1)}%)</div>
+    <div><strong>Polling:</strong> {pollingActive ? '✅ ACTIVO' : '❌ INACTIVO'}</div>
+  </div>
+
   <div class="grid-layout">
     <div class="panel">
       <h2>Detección actual</h2>
@@ -143,9 +189,30 @@ async function calibrarFigura() {
           <div class="placeholder">Conectando con la cámara...</div>
         {/if}
       </div>
+
+      <div class="detection-result">
+        <div class="figure-info">
+          <span class="figure-name">{detectionData.figura}</span>
+          <span class="confidence-value">{(detectionData.confianza * 100).toFixed(1)}%</span>
+        </div>
+        
+        <div class="confidence-meter">
+          <div class="progress-bar-bg">
+            <div 
+              class="progress-bar-fill {detectionData.figura !== 'Ninguna' ? 'active' : ''}"
+              style="width: {detectionData.confianza * 100}%"
+            ></div>
+          </div>
+          <div class="confidence-label">
+            <span>Confianza</span>
+            <span>{(detectionData.confianza * 100).toFixed(1)}%</span>
+          </div>
+        </div>
+      </div>
+
       <div class="stream-info">
-        <span>IP: 192.168.1.84 </span>
-        <span>Polling activo cada 500 ms</span>
+        <span>IP: 192.168.1.84</span>
+        <span>Requests: {requestCount} | Intervalo: 500ms</span>
       </div>
     </div>
 
@@ -187,6 +254,7 @@ async function calibrarFigura() {
 </main>
 
 <style>
+  /* (Todos los estilos anteriores se mantienen igual) */
   :global(body) {
     margin: 0;
     font-family: 'Segoe UI', system-ui, sans-serif;
@@ -228,18 +296,22 @@ async function calibrarFigura() {
     border-left-color: #22c55e;
   }
 
-  .ip-config {
-    display: flex;
-    gap: 10px;
+  .debug-panel {
+    background: #2a2a40;
+    padding: 12px 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-family: monospace;
+    font-size: 0.8rem;
+    color: #facc15;
+    border-left: 4px solid #facc15;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
   }
 
-  .ip-config input {
-    background: #2a2a40;
-    border: 1px solid #3a3a50;
-    color: #fff;
-    padding: 5px 10px;
-    border-radius: 4px;
-    width: 150px;
+  .debug-panel div {
+    margin: 2px 0;
   }
 
   .grid-layout {
@@ -250,6 +322,7 @@ async function calibrarFigura() {
 
   @media (max-width: 768px) {
     .grid-layout { grid-template-columns: 1fr; }
+    .debug-panel { grid-template-columns: 1fr; }
   }
 
   .panel {
@@ -290,35 +363,55 @@ async function calibrarFigura() {
     text-align: center;
   }
 
-  /* Detection Panel Styles */
+  /* Detection Result Styles */
   .detection-result {
+    margin: 20px 0;
+    padding: 15px;
+    background: #0f3460;
+    border-radius: 8px;
+  }
+
+  .figure-info {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
-    font-size: 1.2rem;
+    margin-bottom: 10px;
   }
 
   .figure-name {
+    font-size: 1.2rem;
     font-weight: bold;
+    color: #4cc9f0;
+  }
+
+  .confidence-value {
+    font-size: 1.1rem;
     color: #fff;
-    font-size: 1.5rem;
+  }
+
+  .confidence-meter {
+    margin-top: 10px;
   }
 
   .progress-bar-bg {
-    height: 25px;
-    background: #0f3460;
-    border-radius: 12px;
+    height: 20px;
+    background: #2a2a40;
+    border-radius: 10px;
     overflow: hidden;
-    margin-top: 5px;
+    margin-bottom: 5px;
   }
 
   .progress-bar-fill {
     height: 100%;
-    transition: width 0.3s ease, background-color 0.3s ease;
+    background: #666;
+    transition: width 0.3s ease;
   }
 
-  .confidence-meter .label {
+  .progress-bar-fill.active {
+    background: linear-gradient(90deg, #ef4444, #facc15, #22c55e);
+  }
+
+  .confidence-label {
     display: flex;
     justify-content: space-between;
     font-size: 0.9rem;
