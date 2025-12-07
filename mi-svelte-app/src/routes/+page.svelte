@@ -793,11 +793,6 @@
     min-width: 100px;
   }
 
-  .id-info {
-    font-size: 11px;
-    color: #666;
-    font-style: italic;
-  }
 
   .total-objetos {
     margin-top: 20px;
