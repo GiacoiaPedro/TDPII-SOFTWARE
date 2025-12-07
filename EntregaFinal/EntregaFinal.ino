@@ -183,11 +183,14 @@ const char index_html[] PROGMEM = R"rawliteral(
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
         
         .container {
-            max-width: 1200px;
-            margin: 0 auto;
+            width: 100%;
+            max-width: 1000px;
             background: white;
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
@@ -197,27 +200,33 @@ const char index_html[] PROGMEM = R"rawliteral(
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 30px;
+            padding: 25px;
             text-align: center;
         }
         
         .header h1 {
-            font-size: 2.5em;
+            font-size: 2em;
             margin-bottom: 10px;
         }
         
-        .content {
+        .header p {
+            font-size: 1em;
+            opacity: 0.9;
+        }
+        
+        .main-content {
             display: flex;
-            flex-direction: column;
+            flex-wrap: wrap;
             padding: 30px;
-            gap: 20px;
+            gap: 30px;
         }
         
         .video-section {
-            background: #f8f9fa;
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            flex: 1;
+            min-width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
         }
         
         .video-container {
@@ -237,17 +246,18 @@ const char index_html[] PROGMEM = R"rawliteral(
         .controls {
             display: flex;
             gap: 10px;
-            margin-top: 15px;
             justify-content: center;
+            margin-top: 5px;
         }
         
         .btn {
-            padding: 12px 25px;
+            padding: 12px 30px;
             border: none;
             border-radius: 8px;
             font-weight: bold;
             cursor: pointer;
             transition: all 0.3s;
+            font-size: 1em;
         }
         
         .btn-detect {
@@ -257,6 +267,8 @@ const char index_html[] PROGMEM = R"rawliteral(
         
         .btn-detect:hover {
             background: #218838;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
         }
         
         .btn-stream {
@@ -266,128 +278,280 @@ const char index_html[] PROGMEM = R"rawliteral(
         
         .btn-stream:hover {
             background: #0056b3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.3);
         }
         
-        .detections-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
+        .compass-section {
+            flex: 0 0 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
         }
         
-        .detection-card {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            border-left: 5px solid #667eea;
-        }
-        
-        .detection-title {
+        .compass-title {
             color: #667eea;
-            font-size: 1.2em;
-            margin-bottom: 10px;
+            font-size: 1.3em;
+            margin-bottom: 25px;
+            text-align: center;
+            font-weight: 600;
+        }
+        
+        .compass-container {
+            width: 280px;
+            height: 280px;
+            position: relative;
+            border-radius: 50%;
+            background: linear-gradient(145deg, #f0f0f0, #ffffff);
+            box-shadow: 15px 15px 30px #d9d9d9, 
+                       -15px -15px 30px #ffffff;
             display: flex;
-            justify-content: space-between;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #e0e0e0;
         }
         
-        .detection-data {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-        
-        .data-item {
-            padding: 8px;
+        .compass-inner {
+            width: 230px;
+            height: 230px;
+            position: relative;
+            border-radius: 50%;
             background: white;
-            border-radius: 5px;
-            border: 1px solid #e0e0e0;
-        }
-        
-        .data-label {
-            font-weight: bold;
-            color: #555;
-            font-size: 0.9em;
-        }
-        
-        .data-value {
-            color: #333;
-            margin-top: 5px;
-        }
-        
-        .status-bar {
             display: flex;
-            justify-content: space-between;
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 10px;
-            margin-top: 20px;
+            align-items: center;
+            justify-content: center;
         }
         
-        .status-item {
+        .compass-axis {
+            position: absolute;
+            background: #333;
+        }
+        
+        .axis-vertical {
+            width: 3px;
+            height: 100%;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        
+        .axis-horizontal {
+            width: 100%;
+            height: 3px;
+            top: 50%;
+            left: 0;
+            transform: translateY(-50%);
+        }
+        
+        .compass-label {
+            position: absolute;
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #333;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        .compass-top {
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
             text-align: center;
         }
         
-        .status-value {
-            font-size: 1.5em;
-            font-weight: bold;
+        .compass-top .degree {
+            font-size: 0.8em;
             color: #667eea;
         }
         
-        .status-label {
-            font-size: 0.9em;
-            color: #666;
+        .compass-right {
+            top: 50%;
+            right: 10px;
+            transform: translateY(-50%);
+            text-align: center;
         }
         
-        .canvas-overlay {
+        .compass-right .degree {
+            font-size: 0.8em;
+            color: #667eea;
+        }
+        
+        .compass-bottom {
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+        }
+        
+        .compass-bottom .degree {
+            font-size: 0.8em;
+            color: #667eea;
+        }
+        
+        .compass-left {
+            top: 50%;
+            left: 10px;
+            transform: translateY(-50%);
+            text-align: center;
+        }
+        
+        .compass-left .degree {
+            font-size: 0.8em;
+            color: #667eea;
+        }
+        
+        .center-point {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 15px;
+            height: 15px;
+            background: #667eea;
+            border-radius: 50%;
+            z-index: 10;
+            box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
+        }
+        
+        .coord-system {
+            margin-top: 30px;
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        
+        .coord-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #555;
+        }
+        
+        .coord-description {
+            color: #777;
+            max-width: 250px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .video-section {
+                width: 100%;
+            }
+            
+            .compass-section {
+                width: 100%;
+                align-items: center;
+            }
+            
+            .compass-container {
+                width: 250px;
+                height: 250px;
+            }
+            
+            .compass-inner {
+                width: 200px;
+                height: 200px;
+            }
+            
+            .compass-label {
+                font-size: 1.2em;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .header {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 1.7em;
+            }
+            
+            .main-content {
+                padding: 20px;
+            }
+            
+            .compass-container {
+                width: 220px;
+                height: 220px;
+            }
+            
+            .compass-inner {
+                width: 180px;
+                height: 180px;
+            }
+            
+            .btn {
+                padding: 10px 20px;
+                font-size: 0.9em;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 ESP32-CAM Detector de Figuras</h1>
-            <p>Detección en tiempo real con Momentos de Hu</p>
+            <h1>🎯 ESP32-CAM Detector</h1>
+            <p>Sistema de detección de formas geométricas</p>
         </div>
         
-        <div class="content">
+        <div class="main-content">
             <div class="video-section">
-                <h3>📹 Video en Vivo</h3>
                 <div class="video-container">
                     <img id="stream" src="/processed_stream" alt="Stream en vivo">
-                    <canvas id="overlay" class="canvas-overlay"></canvas>
                 </div>
-                
                 <div class="controls">
-                    <button id="btn-detect" class="btn btn-detect">🔍 Detener Stream y Detectar</button>
+                    <button id="btn-detect" class="btn btn-detect">⏸ Detener Stream</button>
                     <button id="btn-stream" class="btn btn-stream" style="display:none;">▶ Reanudar Stream</button>
                 </div>
             </div>
             
-            <div class="status-bar">
-                <div class="status-item">
-                    <div class="status-value" id="fps-counter">0</div>
-                    <div class="status-label">FPS</div>
+            <div class="compass-section">
+                <div class="compass-title">🧭 Guía de Vientos</div>
+                <div class="compass-container">
+                    <div class="compass-inner">
+                        <!-- Ejes -->
+                        <div class="compass-axis axis-vertical"></div>
+                        <div class="compass-axis axis-horizontal"></div>
+                        
+                        <!-- Punto central -->
+                        <div class="center-point"></div>
+                        
+                        <!-- Marcas de dirección -->
+                        <div class="compass-label compass-top">
+                            <div class="degree">270°</div>
+                            <div class="direction">|</div>
+                        </div>
+                        
+                        <div class="compass-label compass-right">
+                            <div class="degree">0°</div>
+                            <div class="direction">—</div>
+                        </div>
+                        
+                        <div class="compass-label compass-bottom">
+                            <div class="degree">90°</div>
+                            <div class="direction">|</div>
+                        </div>
+                        
+                        <div class="compass-label compass-left">
+                            <div class="degree">180°</div>
+                            <div class="direction">—</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="status-item">
-                    <div class="status-value" id="obj-count">0</div>
-                    <div class="status-label">Objetos</div>
+                
+                <div class="coord-system">
+                    <div class="coord-title">Sistema de Coordenadas</div>
+                    <div class="coord-description">
+                        0° (este) - 90° (sur)<br>
+                        180° (oeste) - 270° (norte)<br>
+                        Sentido horario desde el este
+                    </div>
                 </div>
-                <div class="status-item">
-                    <div class="status-value" id="threshold-display">75</div>
-                    <div class="status-label">Threshold</div>
-                </div>
-            </div>
-            
-            <h3>🎯 Objetos Detectados</h3>
-            <div class="detections-grid" id="detections-container">
-                <!-- Las tarjetas de detección se insertarán aquí -->
             </div>
         </div>
     </div>
@@ -395,171 +559,42 @@ const char index_html[] PROGMEM = R"rawliteral(
     <script>
         // Variables globales
         let isStreaming = true;
-        let lastFrameTime = Date.now();
-        let frameCount = 0;
-        let detectionData = [];
         
         // Elementos DOM
         const streamImg = document.getElementById('stream');
-        const canvas = document.getElementById('overlay');
-        const ctx = canvas.getContext('2d');
         const btnDetect = document.getElementById('btn-detect');
         const btnStream = document.getElementById('btn-stream');
-        const detectionsContainer = document.getElementById('detections-container');
-        const objCount = document.getElementById('obj-count');
-        const fpsCounter = document.getElementById('fps-counter');
-        const thresholdDisplay = document.getElementById('threshold-display');
         
-        // Inicializar canvas
-        function initCanvas() {
-            const streamRect = streamImg.getBoundingClientRect();
-            canvas.width = streamRect.width;
-            canvas.height = streamRect.height;
-        }
-        
-        // Actualizar FPS
-        streamImg.onload = function() {
-            frameCount++;
-            const now = Date.now();
-            const elapsed = (now - lastFrameTime) / 1000;
+        // Función para pausar stream
+        async function pauseStream() {
+            isStreaming = false;
+            btnDetect.style.display = 'none';
+            btnStream.style.display = 'block';
             
-            if (elapsed >= 1) {
-                const fps = Math.round(frameCount / elapsed);
-                fpsCounter.textContent = fps;
-                frameCount = 0;
-                lastFrameTime = now;
-            }
+            // Detener el stream (la imagen quedará congelada)
+            streamImg.src = ''; // Limpiar src
             
-            // Ajustar canvas al tamaño del stream
-            if (canvas.width !== streamImg.clientWidth || canvas.height !== streamImg.clientHeight) {
-                initCanvas();
-            }
-        };
-        
-        // Dibujar detecciones en canvas
-        function drawDetections() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            if (!detectionData || detectionData.length === 0) return;
-            
-            const scaleX = canvas.width / (streamImg.naturalWidth || 640);
-            const scaleY = canvas.height / (streamImg.naturalHeight || 480);
-            
-            detectionData.forEach(obj => {
-                // Dibujar bounding box
-                const x = obj.bbox_x * scaleX;
-                const y = obj.bbox_y * scaleY;
-                const w = obj.bbox_w * scaleX;
-                const h = obj.bbox_h * scaleY;
-                
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#ff0000';
-                ctx.strokeRect(x, y, w, h);
-                
-                // Dibujar centroide
-                const cx = obj.centro_x * scaleX;
-                const cy = obj.centro_y * scaleY;
-                
-                ctx.fillStyle = '#ff0000';
-                ctx.beginPath();
-                ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Etiqueta
-                ctx.fillStyle = 'white';
-                ctx.font = '14px Arial';
-                ctx.fillText(`${obj.forma} (${obj.color})`, x + 5, y - 5);
-            });
-        }
-        
-        // Actualizar interfaz con detecciones
-        function updateDetectionsUI(data) {
-            detectionData = data.objetos || [];
-            objCount.textContent = detectionData.length;
-            
-            // Limpiar contenedor
-            detectionsContainer.innerHTML = '';
-            
-            // Crear tarjetas para cada objeto
-            detectionData.forEach((obj, index) => {
-                const card = document.createElement('div');
-                card.className = 'detection-card';
-                
-                card.innerHTML = `
-                    <div class="detection-title">
-                        <span>Objeto ${index + 1}</span>
-                        <span style="color: #28a745;">${obj.forma}</span>
-                    </div>
-                    <div class="detection-data">
-                        <div class="data-item">
-                            <div class="data-label">Color</div>
-                            <div class="data-value">${obj.color}</div>
-                        </div>
-                        <div class="data-item">
-                            <div class="data-label">Área</div>
-                            <div class="data-value">${obj.area} px²</div>
-                        </div>
-                        <div class="data-item">
-                            <div class="data-label">Centroide</div>
-                            <div class="data-value">(${obj.centro_x}, ${obj.centro_y})</div>
-                        </div>
-                        <div class="data-item">
-                            <div class="data-label">Bounding Box</div>
-                            <div class="data-value">${obj.bbox_w}x${obj.bbox_h}</div>
-                        </div>
-                    </div>
-                `;
-                
-                detectionsContainer.appendChild(card);
-            });
-            
-            // Dibujar en canvas
-            drawDetections();
-        }
-        
-        // Función para obtener detecciones
-        async function fetchDetections() {
+            // Obtener una captura
             try {
-                const response = await fetch('/detect');
-                const data = await response.json();
-                updateDetectionsUI(data);
+                const response = await fetch('/capture');
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                streamImg.src = url;
+                
+                // Reanudar automáticamente después de 3 segundos
+                setTimeout(() => {
+                    if (!isStreaming) {
+                        resumeStream();
+                    }
+                }, 3000);
+                
             } catch (error) {
-                console.error('Error obteniendo detecciones:', error);
-            }
-        }
-        
-        // Función para pausar/obtener detecciones
-        // Función para pausar/obtener detecciones
-// Función para pausar/obtener detecciones
-async function pauseAndDetect() {
-    isStreaming = false;
-    btnDetect.style.display = 'none';
-    btnStream.style.display = 'block';
-    
-    // Detener el stream (la imagen quedará congelada)
-    streamImg.src = ''; // Limpiar src
-    
-    // Obtener una captura y detecciones
-    try {
-        const response = await fetch('/capture');
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        streamImg.src = url;
-        
-        // Obtener detecciones
-        await fetchDetections();
-        
-        // ⭐⭐ NUEVO: Reanudar automáticamente después de 3 segundos
-        setTimeout(() => {
-            if (!isStreaming) {  // Solo si aún no está streaming
+                console.error('Error en captura:', error);
+                // Si hay error, reanudar de todos modos
                 resumeStream();
             }
-        }, 3000);
+        }
         
-    } catch (error) {
-        console.error('Error en detección:', error);
-    }
-}
         // Función para reanudar stream
         function resumeStream() {
             isStreaming = true;
@@ -568,32 +603,19 @@ async function pauseAndDetect() {
             
             // Restaurar stream en vivo
             streamImg.src = '/processed_stream';
-            
-            // Limpiar detecciones
-            detectionData = [];
-            detectionsContainer.innerHTML = '';
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            objCount.textContent = '0';
         }
         
         // Event listeners
-        btnDetect.addEventListener('click', pauseAndDetect);
+        btnDetect.addEventListener('click', pauseStream);
         btnStream.addEventListener('click', resumeStream);
         
-        // Inicializar
-        window.addEventListener('resize', initCanvas);
-        initCanvas();
-        
-        // Actualizar threshold cada 5 segundos
-        setInterval(async () => {
-            try {
-                const response = await fetch('/status');
-                const data = await response.json();
-                thresholdDisplay.textContent = data.threshold || '75';
-            } catch (error) {
-                console.error('Error obteniendo status:', error);
-            }
-        }, 5000);
+        // Manejo de errores en la imagen
+        streamImg.onerror = function() {
+            console.log('Error cargando stream, intentando reconectar...');
+            setTimeout(() => {
+                streamImg.src = '/processed_stream';
+            }, 1000);
+        };
     </script>
 </body>
 </html>
@@ -609,7 +631,7 @@ enum ModoOperacion {
   MODO_CALIBRACION, // Esperando para calibrar
   MODO_IDLE        // No hacer nada
 };
-volatile ModoOperacion modo_actual = MODO_IDLE; // Inicia en modo "Detenido"
+volatile ModoOperacion modo_actual = MODO_DETECCION; // Inicia en modo "Detenido"
 volatile int figura_a_calibrar = -1; // Qué figura vamos a calibrar (0-4)
 
 

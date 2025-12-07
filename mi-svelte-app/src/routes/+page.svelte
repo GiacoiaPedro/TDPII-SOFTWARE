@@ -35,6 +35,42 @@
   const DISPLAY_WIDTH = 320;
   const DISPLAY_HEIGHT = 180;
 
+  // CONSTANTES PARA CALIBRACIÓN DE ZOOM
+  // Posiciones de referencia para calibración (según tus JSONs)
+  const REFERENCIA_ZOOM = {
+    // Primera configuración: objetos en extremos (zoom x1)
+    extremos: {
+      circulo: { x: 54, y: 183 },   // Del primer JSON
+      cuadrado: { x: 269, y: 175 }  // Del primer JSON
+    },
+    // Segunda configuración: objetos cercanos (zoom x2)
+    cercanos: {
+      circulo: { x: 148, y: 182 },  // Del segundo JSON
+      cuadrado: { x: 240, y: 178 }  // Del segundo JSON
+    }
+  };
+
+  // Calcular distancias de referencia
+  const calcularDistancia = (x1, y1, x2, y2) => {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  // Distancias de calibración
+  const DISTANCIA_MAX = calcularDistancia(
+    REFERENCIA_ZOOM.extremos.circulo.x, REFERENCIA_ZOOM.extremos.circulo.y,
+    REFERENCIA_ZOOM.extremos.cuadrado.x, REFERENCIA_ZOOM.extremos.cuadrado.y
+  );
+  
+  const DISTANCIA_MIN = calcularDistancia(
+    REFERENCIA_ZOOM.cercanos.circulo.x, REFERENCIA_ZOOM.cercanos.circulo.y,
+    REFERENCIA_ZOOM.cercanos.cuadrado.x, REFERENCIA_ZOOM.cercanos.cuadrado.y
+  );
+
+  console.log(`Distancia máxima (zoom x1): ${DISTANCIA_MAX.toFixed(2)} px`);
+  console.log(`Distancia mínima (zoom x2): ${DISTANCIA_MIN.toFixed(2)} px`);
+
   // Función para verificar si un objeto es real
   function esObjetoReal(objeto) {
     return objeto && 
@@ -55,12 +91,34 @@
     return { x: x_norm, y: y_norm };
   }
 
-  // Función para calcular zoom basado en distancia
-  function calcularZoom(distanciaNorm) {
-    const zoomMin = 1.0;
-    const zoomMax = 3.0;
-    const factor = Math.exp(-2 * distanciaNorm);
-    return zoomMin + (zoomMax - zoomMin) * factor;
+  // FUNCIÓN MODIFICADA: Calcular zoom basado en distancia con calibración
+  function calcularZoom(distancia) {
+    // Zoom mínimo cuando los objetos están lejos (en extremos)
+    const ZOOM_MIN = 1.0;
+    // Zoom máximo cuando los objetos están cerca
+    const ZOOM_MAX = 2.0;
+    
+    // Normalizar la distancia entre los valores de calibración
+    let factorZoom = 0;
+    
+    if (distancia >= DISTANCIA_MAX) {
+      // Si la distancia es mayor o igual a la distancia máxima, zoom mínimo
+      factorZoom = 0;
+    } else if (distancia <= DISTANCIA_MIN) {
+      // Si la distancia es menor o igual a la distancia mínima, zoom máximo
+      factorZoom = 1;
+    } else {
+      // Interpolación lineal entre las distancias de calibración
+      factorZoom = 1 - ((distancia - DISTANCIA_MIN) / (DISTANCIA_MAX - DISTANCIA_MIN));
+    }
+    
+    // Asegurarse de que factorZoom esté entre 0 y 1
+    factorZoom = Math.max(0, Math.min(1, factorZoom));
+    
+    // Calcular zoom interpolado
+    const zoomCalculado = ZOOM_MIN + factorZoom * (ZOOM_MAX - ZOOM_MIN);
+    
+    return zoomCalculado;
   }
 
   // Función para calcular posición de zoom en píxeles de pantalla
@@ -187,14 +245,14 @@
   function calcularRelaciones() {
     // Calcular relación entre Círculo y Cuadrado (PAR 1)
     if (circulo && cuadrado && esObjetoReal(circulo) && esObjetoReal(cuadrado)) {
-      // Normalizar coordenadas
-      const normCirculo = normalizarCoordenadas(circulo.centro_x, circulo.centro_y);
-      const normCuadrado = normalizarCoordenadas(cuadrado.centro_x, cuadrado.centro_y);
+      // Calcular distancia REAL entre Círculo y Cuadrado
+      const distanciaReal = calcularDistancia(
+        circulo.centro_x, circulo.centro_y,
+        cuadrado.centro_x, cuadrado.centro_y
+      );
       
-      // Calcular distancia en espacio normalizado
-      const dx = normCuadrado.x - normCirculo.x;
-      const dy = normCuadrado.y - normCirculo.y;
-      const distanciaNorm = Math.sqrt(dx * dx + dy * dy);
+      // Calcular zoom basado en distancia calibrada
+      zoomImagen1 = calcularZoom(distanciaReal);
       
       // Calcular ángulo desde el Círculo hacia el Cuadrado (0-360°)
       rotacionImagen1 = calcularAnguloDesdePunto1(
@@ -202,8 +260,9 @@
         cuadrado.centro_x, cuadrado.centro_y
       );
       
-      // Calcular zoom basado en distancia normalizada
-      zoomImagen1 = calcularZoom(distanciaNorm);
+      // Normalizar coordenadas para posición del zoom
+      const normCirculo = normalizarCoordenadas(circulo.centro_x, circulo.centro_y);
+      const normCuadrado = normalizarCoordenadas(cuadrado.centro_x, cuadrado.centro_y);
       
       // Calcular punto medio para el centro del zoom
       const midX = (normCirculo.x + normCuadrado.x) / 2;
@@ -211,6 +270,13 @@
       
       // Calcular posición de zoom en píxeles
       posicionZoom1 = calcularPosicionZoom(midX, midY);
+      
+      // Mostrar información de calibración en consola
+      console.log(`Círculo-Cuadrado: Distancia=${distanciaReal.toFixed(2)}px, Zoom=${zoomImagen1.toFixed(2)}x`);
+      console.log(`  - Pos Círculo: (${circulo.centro_x}, ${circulo.centro_y})`);
+      console.log(`  - Pos Cuadrado: (${cuadrado.centro_x}, ${cuadrado.centro_y})`);
+      console.log(`  - Distancia ref min: ${DISTANCIA_MIN.toFixed(2)}px (zoom x2)`);
+      console.log(`  - Distancia ref max: ${DISTANCIA_MAX.toFixed(2)}px (zoom x1)`);
     } else {
       rotacionImagen1 = 0;
       zoomImagen1 = 1;
@@ -218,15 +284,16 @@
     }
 
     // Calcular relación entre Triángulo y L (PAR 2)
+    // Para el segundo par, podemos usar la misma lógica de calibración
     if (triangulo && L && esObjetoReal(triangulo) && esObjetoReal(L)) {
-      // Normalizar coordenadas
-      const normTriangulo = normalizarCoordenadas(triangulo.centro_x, triangulo.centro_y);
-      const normL = normalizarCoordenadas(L.centro_x, L.centro_y);
+      // Calcular distancia REAL entre Triángulo y L
+      const distanciaReal = calcularDistancia(
+        triangulo.centro_x, triangulo.centro_y,
+        L.centro_x, L.centro_y
+      );
       
-      // Calcular distancia en espacio normalizado
-      const dx = normL.x - normTriangulo.x;
-      const dy = normL.y - normTriangulo.y;
-      const distanciaNorm = Math.sqrt(dx * dx + dy * dy);
+      // Calcular zoom basado en distancia calibrada (usamos la misma calibración)
+      zoomImagen2 = calcularZoom(distanciaReal);
       
       // Calcular ángulo desde el Triángulo hacia la L (0-360°)
       rotacionImagen2 = calcularAnguloDesdePunto1(
@@ -234,8 +301,9 @@
         L.centro_x, L.centro_y
       );
       
-      // Calcular zoom basado en distancia normalizada
-      zoomImagen2 = calcularZoom(distanciaNorm);
+      // Normalizar coordenadas para posición del zoom
+      const normTriangulo = normalizarCoordenadas(triangulo.centro_x, triangulo.centro_y);
+      const normL = normalizarCoordenadas(L.centro_x, L.centro_y);
       
       // Calcular punto medio para el centro del zoom
       const midX = (normTriangulo.x + normL.x) / 2;
@@ -243,6 +311,8 @@
       
       // Calcular posición de zoom en píxeles
       posicionZoom2 = calcularPosicionZoom(midX, midY);
+      
+      console.log(`Triángulo-L: Distancia=${distanciaReal.toFixed(2)}px, Zoom=${zoomImagen2.toFixed(2)}x`);
     } else {
       rotacionImagen2 = 0;
       zoomImagen2 = 1;
@@ -294,6 +364,25 @@
     </button>
   </div>
 
+  <!-- Sección de información de calibración -->
+  <div class="calibracion-info">
+    <h3>Configuración de Calibración</h3>
+    <div class="calibracion-datos">
+      <div class="calibracion-item">
+        <strong>Referencia Zoom x1 (objetos en extremos):</strong>
+        <p>Círculo: ({REFERENCIA_ZOOM.extremos.circulo.x}, {REFERENCIA_ZOOM.extremos.circulo.y})</p>
+        <p>Cuadrado: ({REFERENCIA_ZOOM.extremos.cuadrado.x}, {REFERENCIA_ZOOM.extremos.cuadrado.y})</p>
+        <p>Distancia: {DISTANCIA_MAX.toFixed(2)} px</p>
+      </div>
+      <div class="calibracion-item">
+        <strong>Referencia Zoom x2 (objetos cercanos):</strong>
+        <p>Círculo: ({REFERENCIA_ZOOM.cercanos.circulo.x}, {REFERENCIA_ZOOM.cercanos.circulo.y})</p>
+        <p>Cuadrado: ({REFERENCIA_ZOOM.cercanos.cuadrado.x}, {REFERENCIA_ZOOM.cercanos.cuadrado.y})</p>
+        <p>Distancia: {DISTANCIA_MIN.toFixed(2)} px</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Imágenes con rotación y zoom -->
   <div class="images-container">
     
@@ -317,6 +406,8 @@
             <span>Zoom: {zoomImagen1.toFixed(2)}x</span>
             <span class="separador">|</span>
             <span>Ángulo: {rotacionImagen1.toFixed(1)}°</span>
+            <span class="separador">|</span>
+            <span>Distancia: {circulo && cuadrado ? calcularDistancia(circulo.centro_x, circulo.centro_y, cuadrado.centro_x, cuadrado.centro_y).toFixed(1) : 0}px</span>
           </div>
           <div class="relacion-info">
             <span>Relación: Círculo → Cuadrado</span>
@@ -351,6 +442,8 @@
             <span>Zoom: {zoomImagen2.toFixed(2)}x</span>
             <span class="separador">|</span>
             <span>Ángulo: {rotacionImagen2.toFixed(1)}°</span>
+            <span class="separador">|</span>
+            <span>Distancia: {triangulo && L ? calcularDistancia(triangulo.centro_x, triangulo.centro_y, L.centro_x, L.centro_y).toFixed(1) : 0}px</span>
           </div>
           <div class="relacion-info">
             <span>Relación: Triángulo → L</span>
@@ -510,6 +603,8 @@
             <p><strong>Zoom aplicado:</strong> {zoomImagen1.toFixed(2)}x</p>
             <p><strong>Centro de transformación:</strong> ({posicionZoom1.x}, {posicionZoom1.y})</p>
             {#if circulo && cuadrado}
+              <p><strong>Distancia actual:</strong> {calcularDistancia(circulo.centro_x, circulo.centro_y, cuadrado.centro_x, cuadrado.centro_y).toFixed(2)} px</p>
+              <p><strong>Rango calibrado:</strong> {DISTANCIA_MIN.toFixed(2)}px (x2) - {DISTANCIA_MAX.toFixed(2)}px (x1)</p>
               <p><strong>Posición Círculo:</strong> ({circulo.centro_x}, {circulo.centro_y})</p>
               <p><strong>Posición Cuadrado:</strong> ({cuadrado.centro_x}, {cuadrado.centro_y})</p>
             {/if}
@@ -526,6 +621,8 @@
             <p><strong>Zoom aplicado:</strong> {zoomImagen2.toFixed(2)}x</p>
             <p><strong>Centro de transformación:</strong> ({posicionZoom2.x}, {posicionZoom2.y})</p>
             {#if triangulo && L}
+              <p><strong>Distancia actual:</strong> {calcularDistancia(triangulo.centro_x, triangulo.centro_y, L.centro_x, L.centro_y).toFixed(2)} px</p>
+              <p><strong>Rango calibrado:</strong> {DISTANCIA_MIN.toFixed(2)}px (x2) - {DISTANCIA_MAX.toFixed(2)}px (x1)</p>
               <p><strong>Posición Triángulo:</strong> ({triangulo.centro_x}, {triangulo.centro_y})</p>
               <p><strong>Posición L:</strong> ({L.centro_x}, {L.centro_y})</p>
             {/if}
@@ -621,6 +718,40 @@
   .btn-inactivo {
     background-color: #388e3c;
     color: white;
+  }
+
+  .calibracion-info {
+    background-color: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 30px;
+  }
+
+  .calibracion-datos {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-top: 15px;
+  }
+
+  .calibracion-item {
+    background-color: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 15px;
+  }
+
+  .calibracion-item strong {
+    color: #4caf50;
+    display: block;
+    margin-bottom: 10px;
+  }
+
+  .calibracion-item p {
+    margin: 4px 0;
+    font-size: 14px;
+    color: #aaa;
   }
 
   .images-container {
@@ -884,6 +1015,10 @@
     input {
       width: 100%;
       max-width: 300px;
+    }
+    
+    .calibracion-datos {
+      grid-template-columns: 1fr;
     }
     
     .resumen-columnas {
