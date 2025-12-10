@@ -364,24 +364,7 @@
     </button>
   </div>
 
-  <!-- Sección de información de calibración -->
-  <div class="calibracion-info">
-    <h3>Configuración de Calibración</h3>
-    <div class="calibracion-datos">
-      <div class="calibracion-item">
-        <strong>Referencia Zoom x1 (objetos en extremos):</strong>
-        <p>Círculo: ({REFERENCIA_ZOOM.extremos.circulo.x}, {REFERENCIA_ZOOM.extremos.circulo.y})</p>
-        <p>Cuadrado: ({REFERENCIA_ZOOM.extremos.cuadrado.x}, {REFERENCIA_ZOOM.extremos.cuadrado.y})</p>
-        <p>Distancia: {DISTANCIA_MAX.toFixed(2)} px</p>
-      </div>
-      <div class="calibracion-item">
-        <strong>Referencia Zoom x2 (objetos cercanos):</strong>
-        <p>Círculo: ({REFERENCIA_ZOOM.cercanos.circulo.x}, {REFERENCIA_ZOOM.cercanos.circulo.y})</p>
-        <p>Cuadrado: ({REFERENCIA_ZOOM.cercanos.cuadrado.x}, {REFERENCIA_ZOOM.cercanos.cuadrado.y})</p>
-        <p>Distancia: {DISTANCIA_MIN.toFixed(2)} px</p>
-      </div>
-    </div>
-  </div>
+
 
   <!-- Imágenes con rotación y zoom -->
   <div class="images-container">

@@ -1,7 +1,14 @@
-/*18:27 4/12/2025
- * ESP32-CAM CON DETECCIÓN DE FIGURAS USANDO HU MOMENTS - VERSIÓN OPTIMIZADA
- * Compatible con interfaz Svelte Kit - MEJOR PRECISIÓN
+/*
+ * PROYECTO: SISTEMA DE VISIÓN ARTIFICIAL EMBEBIDO EN ESP32-CAM
+ * DESCRIPCIÓN: Detección y clasificación de figuras geométricas en tiempo real
+ * utilizando algoritmos de visión clásica (Momentos de Hu). Para la asignatura Taller de Proyecto II
+ * AUTOR: Grupo J4 (Cazala Franco, De Blasio Tomas, Giacoia Pedro)
+ * FECHA: 9/12/2025
  */
+
+// ==========================================
+// 1. INCLUSIÓN DE LIBRERÍAS
+// ==========================================
 
 #include "WiFi.h"
 #include "esp_camera.h"
@@ -17,27 +24,26 @@
 #include <Arduino.h>
 #include <stdbool.h>
 
-// ---------- INICIO: Declaraciones únicas y consistentes ----------
+// ---------- Declaraciones  ----------
 
-// ----- Tipo Objeto (USAR ESTA VERSIÓN) -----
-// Esta definición contiene los campos que tu código utiliza más abajo.
-// Usa String para 'forma' y 'color' porque tu código hace .c_str() y asignaciones.
+// ----- Tipo Objeto -----
+
 typedef struct {
-    int id;
-    int area;
-    int perimetro;
-    int centro_x;
+    int id;              // Identificador del objeto
+    int area;           // Cantidad de píxeles que forman el objeto
+    int perimetro;      // Perímetro aproximado (se calcula al recorrer el contorno)
+    int centro_x;       // Centroide del objeto
     int centro_y;
-    int bbox_x;
+    int bbox_x;         // Esquina superior izquierda del bounding box
     int bbox_y;
-    int bbox_w;
+    int bbox_w;         // Ancho y alto del bounding box
     int bbox_h;
-    double momento_m00; // si usás momentos (opcional)
-    String forma;       // nombre de la forma (ej. "CUADRADO")
-    String color;       // nombre color (ej. "NEGRO")
+    double momento_m00; 
+    String forma;       // Nombre de la forma (ej. "CUADRADO")
+    String color;       // Nombre color (ej. "NEGRO")
 } Objeto;
 
-// ----- SSE: estructura cliente y variables globales (UNA SOLA VEZ) -----
+// ----- SSE: estructura cliente y variables globales -----
 #define MAX_SSE_CLIENTS 4
 
 typedef struct {
@@ -48,12 +54,9 @@ typedef struct {
 static sse_client_t sse_clients[MAX_SSE_CLIENTS];
 static SemaphoreHandle_t sse_mutex = NULL;
 
-// NOTA: no declarar prototipos 'extern' y luego definir 'static'.  
-// Aquí NO ponemos prototipos separados; definiremos las funciones abajo sin 'static' duplicado.
 
-// ---------- FIN: Declaraciones únicas ---------- 
 
-// Prototipos (opcional pero ordena)
+// Prototipos 
 void sse_init_clients();
 bool sse_add_client(httpd_req_t *req);
 void sse_remove_client(httpd_req_t *req);
@@ -126,12 +129,12 @@ void sse_broadcast_json(const char *json_str) {
 
 
 static const char *TAG_SSE = "sse";
-static httpd_handle_t server = NULL; // si ya la tenés definida, ignorá esta línea
+static httpd_handle_t server = NULL; 
 
 
 // ===== CONFIGURACIÓN WIFI =====
-const char* ssid = "PedroWiFi 2.4Ghz"; //"iPhone de Tomás";//"Sandra Wifi 2.4";
-const char* password =  "negonego"; //"tomas2002";//"0142265207";
+const char* ssid = "PedroWiFi 2.4Ghz"; 
+const char* password =  "negonego"; 
 
 // ===== PINES ESP32-CAM =====
 #define PWDN_GPIO_NUM     32
@@ -152,16 +155,17 @@ const char* password =  "negonego"; //"tomas2002";//"0142265207";
 
 #define PCLK_GPIO_NUM     22
 
-httpd_handle_t camera_httpd = NULL;
+httpd_handle_t camera_httpd = NULL;// Handle del servidor HTTP de la cámara. Se usa para iniciar y manejar
+// las rutas HTTP que permiten transmitir la imagen en tiempo real.
 
 // Variables globales
-bool calibrating = false;
-int current_calibration_figure = -1;
-int photo_count = 70;
-uint8_t threshold_value = 75; // 0 <-- Más blanco  255 <-- Más negro
-char ultima_figura[20] = "Ninguna";
-char ultimo_color[20] = "N/A";
-double ultima_confianza = 0.0;
+bool calibrating = false; // Indica si el sistema está actualmente en proceso de calibración
+int current_calibration_figure = -1; // Almacena el ID de la figura que se está calibrando. -1 significa que no hay una figura seleccionada para calibración.
+int photo_count = 70; // Cantidad de fotos a capturar durante la calibración de una figura.
+uint8_t threshold_value = 75; // Umbral de binarización. Se usa para separar el fondo del objeto. 0 <-- Más blanco  255 <-- Más negro
+char ultima_figura[20] = "Ninguna"; // Guarda el nombre de la última figura detectada.
+char ultimo_color[20] = "N/A"; // Guarda el color detectado de la última figura.
+double ultima_confianza = 0.0; // Nivel de confianza en la clasificación de la última figura detectada.
 
 // HTML embebido para la interfaz web
 const char index_html[] PROGMEM = R"rawliteral(
@@ -622,30 +626,38 @@ const char index_html[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 // Buffer para imagen procesada
-uint8_t* imagen_procesada = nullptr;
-int* labels = nullptr;  // Para etiquetar componentes
+uint8_t* imagen_procesada = nullptr; // Imagen binarizada espués de aplicar threshold.
+int* labels = nullptr;  // Array para etiquetar componentes conectados. Cada píxel almacena un ID para saber a qué figura pertenece.
 
 // --- Máquina de Estados ---
 enum ModoOperacion {
-  MODO_DETECCION,  // Estado normal, busca figuras
-  MODO_CALIBRACION, // Esperando para calibrar
-  MODO_IDLE        // No hacer nada
+  MODO_DETECCION,  // Modo deteccion: analizar imagen, detectar figuras y colores
+  MODO_CALIBRACION, // Modo Calibracion: recolectar datos para calibrar una figura
+  MODO_IDLE        // Sistema en reposo: no procesa imágenes
 };
-volatile ModoOperacion modo_actual = MODO_DETECCION; // Inicia en modo "Detenido"
+
+volatile ModoOperacion modo_actual = MODO_DETECCION; // Estado actual del sistema. Inicia en modo "Deteccion"
 volatile int figura_a_calibrar = -1; // Qué figura vamos a calibrar (0-4)
 
 
-// Variables para centroide
+// Coordenadas (x, y) del centroide de la última figura detectada.
 double ultimo_cx = -1;
 double ultimo_cy = -1;
 
 // Estructura para figuras mejorada
 typedef struct {
-    double hu[7];
-    const char* nombre;
-    bool calibrada;
+    double hu[7]; // Vector con los 7 Momentos de Hu modelo para esta figura
+    const char* nombre; // Nombre de la figura 
+    bool calibrada; // Indica si ya tiene valores de Hu válidos
     int muestras;  // Número de muestras para esta figura
 } FiguraCalibrada;
+
+// ===========================================
+//  Base de datos de 5 figuras posibles
+// ===========================================
+// Cada entrada contiene los Hu característicos y su nombre.
+// Si calibrada = false => se deben obtener nuevos Hu.
+// Si calibrada = true  => ya está lista para comparar.
 
 FiguraCalibrada figuras_calibradas[5] = {
     {{-1.791, -13.305, -14.275, -12.958, -26.598, -20.774, 0.00}, "Cuadrado", true, 10},
@@ -657,18 +669,21 @@ FiguraCalibrada figuras_calibradas[5] = {
 
 
 const int MIN_AREA = 500;         // área mínima para considerar un objeto
-const float HU_SIM_SCALE = 0.3f;  // escala más estricta para mejor precisión
+const float HU_SIM_SCALE = 0.3f;  // Escala de sensibilidad para comparar HU moments. Valores más bajos → comparación más estricta → mejor precisión en figuras similares.
 
 
 
-const int MAX_OBJETOS = 4;
-Objeto objetos_detectados[MAX_OBJETOS];
-int num_objetos = 0;
+const int MAX_OBJETOS = 4; // Máximo de figuras que se guardan por frame.
+Objeto objetos_detectados[MAX_OBJETOS]; // Arreglo donde se guardarán los objetos detectados en un frame.
+int num_objetos = 0; // Cantidad actual de objetos detectados en este frame.
 
 // ===== ESTRUCTURA PARA FLOOD FILL =====
 struct Punto { int x, y; };
 
-// ===== FLOOD FILL ITERATIVO =====
+// Flood Fill iterativo (BFS) que etiqueta una región conectada en la imagen.
+// Expande desde (sx, sy) usando vecindad 4 y asigna 'label' a todos los
+// píxeles del objeto (img == 0) que aún no fueron etiquetados en 'labels'.
+
 void floodFill(uint8_t* img, int* labels, int w, int h, int sx, int sy, int label) {
   const int MAX_Q = 100000;
   Punto* q = (Punto*)malloc(sizeof(Punto) * MAX_Q);
@@ -701,28 +716,31 @@ void floodFill(uint8_t* img, int* labels, int w, int h, int sx, int sy, int labe
 // ===== ANALIZAR OBJETO =====
 Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) {
   Objeto obj;
-  obj.id = label;
-  obj.area = 0;
-  obj.perimetro = 0;
-  obj.centro_x = 0;
+  obj.id = label;               // Identificador del objeto (coincide con flood fill)
+  obj.area = 0;                 // Contador de pixeles del objeto
+  obj.perimetro = 0;            // (Se calcula luego)
+  obj.centro_x = 0;             // Se acumulan para centroides
   obj.centro_y = 0;
-  obj.bbox_x = w;
+  obj.bbox_x = w;               // Inicializados al máximo para encontrar mínimos reales
   obj.bbox_y = h;
-  obj.bbox_w = 0;
+  obj.bbox_w = 0;               // Inicializados a 0 para encontrar máximos reales
   obj.bbox_h = 0;
-  //obj.color = "N/A";
+  //obj.color = "N/A";          // Si no se calcula el color, queda N/A
   
-  long sum_x = 0, sum_y = 0;
-  
+  long sum_x = 0, sum_y = 0;  // Suma acumulada de los píxeles del objeto para obtener el centroide.
+
   // Primera pasada: área, centroide, bounding box
-  const int CROP_MARGIN = 10; 
+  const int CROP_MARGIN = 10;  // Margen para ignorar bordes de la imagen donde suele haber ruido o sombras.
+  
   for (int y = CROP_MARGIN; y < h - CROP_MARGIN; y++) {
     for (int x = CROP_MARGIN; x < w - CROP_MARGIN; x++) {
       if (labels[y * w + x] == label) {
-        obj.area++;
-        sum_x += x;
-        sum_y += y;
+        // Si el pixel pertenece a este objeto...
+        obj.area++;          // Aumentamos el área del objeto
+        sum_x += x;          // Acumulamos X para el centroide
+        sum_y += y;          // Acumulamos Y
         
+        // Actualizamos bounding box
         if (x < obj.bbox_x) obj.bbox_x = x;
         if (y < obj.bbox_y) obj.bbox_y = y;
         if (x > obj.bbox_w) obj.bbox_w = x;
@@ -736,26 +754,38 @@ Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) 
     return obj;
   }
   
+ // Si el objeto tiene muy pocos píxeles, lo consideramos ruido y salimos.
+
+ // Calcular centroide a partir de las sumas acumuladas
+
   obj.centro_x = sum_x / obj.area;
   obj.centro_y = sum_y / obj.area;
+
+ // centro_x/centro_y los convertimos a double oara los cálculos de momentos que requieren precisión.
+
   double cx = (double)obj.centro_x;
   double cy = (double)obj.centro_y;
+
+  // Convertir las coordenadas máximas/minimas a ancho/alto del bbox
 
   obj.bbox_w = obj.bbox_w - obj.bbox_x + 1;
   obj.bbox_h = obj.bbox_h - obj.bbox_y + 1;
   
- // --- ¡NUEVA LÓGICA! ---
   // 1. Calcular Momentos Centrales (muXX)
+  // Inicializo acumuladores para momentos centrales hasta orden 3
   double mu20 = 0, mu02 = 0, mu11 = 0;
   double mu30 = 0, mu03 = 0, mu21 = 0, mu12 = 0;
 
+  // Recorro la región entera y solo sumo para los píxeles que pertenecen a ESTE objeto (labels == label)
   for (int y = CROP_MARGIN; y < h - CROP_MARGIN; y++) {
     for (int x = CROP_MARGIN; x < w - CROP_MARGIN; x++) {
-      // ¡LA CLAVE! Solo analizar píxeles de ESTE objeto
+      // Solo analizamos los píxeles de ESTE objeto
       if (labels[y * w + x] == label) {
+        // desplazamientos respecto al centroide
         double dx = (x - cx);
         double dy = (y - cy);
         
+        // Acumular momentos centrales: mu_pq = Σ (dx^p * dy^q)
         mu20 += dx * dx;
         mu02 += dy * dy;
         mu11 += dx * dy;
@@ -768,11 +798,15 @@ Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) 
   }
 
   // Normalización y Cálculo de Hu Moments
-  // (Copiado 1:1 de version10.txt [cite: 944-957])
+  // m00 = área total (equivalente al momento de orden 0)
   double m00 = (double)obj.area;
+  // area_sq = m00^2  (usado para normalizar momentos de orden 2)
   double area_sq = m00 * m00;
+  // area_5_2 = m00^(5/2) (usado para normalizar momentos de orden 3)
   double area_5_2 = pow(m00, 2.5);
   
+  // Normalizar los momentos centrales para obtener momentos "nu" invariantes a escala
+
   double nu20 = mu20 / area_sq;
   double nu02 = mu02 / area_sq;
   double nu11 = mu11 / area_sq;
@@ -781,6 +815,7 @@ Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) 
   double nu21 = mu21 / area_5_2;
   double nu12 = mu12 / area_5_2;
 
+  // Calcular los 7 Momentos de Hu a partir de los nuXX
   double hu_actual[7];
   hu_actual[0] = nu20 + nu02;
   hu_actual[1] = (nu20 - nu02) * (nu20 - nu02) + 4.0 * nu11 * nu11;
@@ -793,6 +828,8 @@ Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) 
   hu_actual[6] = (3.0 * nu21 - nu03) * (nu30 + nu12) * ((nu30 + nu12) * (nu30 + nu12) - 3.0 * (nu21 + nu03) * (nu21 + nu03)) -
                  (nu30 - 3.0 * nu12) * (nu21 + nu03) * (3.0 * (nu30 + nu12) * (nu30 + nu12) - (nu21 + nu03) * (nu21 + nu03));
 
+   // Log-transform para estabilizar la magnitud y comparar hu moments
+
   for (int i = 0; i < 7; i++) {
     if (fabs(hu_actual[i]) > 1e-12) {
       hu_actual[i] = log(fabs(hu_actual[i]));
@@ -804,11 +841,15 @@ Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) 
 
 
   // 3. Clasificar 
-  double mejor_sim = 0.00000;
-  int mejor_idx = -1;
+  double mejor_sim = 0.00000; // Mejor similitud encontrada hasta ahora (inicializada a 0)
+  int mejor_idx = -1; // Índice de la figura calibrada que mejor coincide
+  // Recorremos la "base" de figuras calibradas para encontrar la mejor coincidencia
   for (int i = 0; i < 5; i++) {
     if (figuras_calibradas[i].calibrada) {
+      // calcular_similitud_hu_optimizada compara hu_actual con la hu modelo
+      // y devuelve una medida de similitud (mayor = más parecido).
       double sim = calcular_similitud_hu_optimizada(hu_actual, figuras_calibradas[i].hu);
+      // Si la similitud actual es mejor que la mejor hasta ahora, la guardamos
       if (sim > mejor_sim) {
         mejor_sim = sim;
         mejor_idx = i;
@@ -816,30 +857,39 @@ Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) 
     }
   }
   
-  // Usamos el umbral adaptativo 
+  // -------------------------------
+  // Umbral adaptativo 
+  // -------------------------------
   double umbral_adaptativo = 0.35; 
+  // Valor base para decidir si la similitud es suficientemente buena.
+  
   if (mejor_idx != -1 && figuras_calibradas[mejor_idx].muestras >= 3) {
       umbral_adaptativo = 0.4;
   }
 
+  // Decisión final de clasificación
+
   if (mejor_idx != -1 && mejor_sim >= 0.10) { // 0.35 es tu umbral
      obj.forma = figuras_calibradas[mejor_idx].nombre;
   } else {
-     obj.forma = "DESCONOCIDO";
+     obj.forma = "DESCONOCIDO"; // Si no hay coincidencias buenas, marcamos como desconocido
   }
 
-  // 4. Detección de Color (¡Ya la tienes!)
-  // (Copia la lógica de "vistazo" de 'prueba2.txt' [cite: 522-542])
-  // ... (usa obj.centro_x y obj.centro_y para mirar en rgb_buf) ...
-  // obj.color = get_color_name(...);
+  // ----------------- 4) Detección de color -----------------
+  // Tomamos el píxel en el centroide para decidir color.
   if (rgb_buf) {
+    // rgb_buf en formato RGB565: 5 bits R, 6 bits G, 5 bits B
     uint16_t pixel_rgb565 = rgb_buf[obj.centro_y * w + obj.centro_x];
-    uint8_t r = ((pixel_rgb565 >> 11) & 0x1F) << 3;
-    uint8_t g = ((pixel_rgb565 >> 5) & 0x3F) << 2;
-    uint8_t b = (pixel_rgb565 & 0x1F) << 3;
+    // Extraer canales y convertir a 8 bits (shifts simples)
+    uint8_t r = ((pixel_rgb565 >> 11) & 0x1F) << 3; // 5->8 bits
+    uint8_t g = ((pixel_rgb565 >> 5) & 0x3F) << 2;  // 6->8 bits
+    uint8_t b = (pixel_rgb565 & 0x1F) << 3;         // 5->8 bits
     float h, s, v;
-    rgb888_to_hsv(r, g, b, h, s, v); // Asegúrate de tener esta función en tu sketch
-    obj.color = get_color_name(h, s, v); // Asegúrate de tener esta función
+    // Convertir RGB888 a HSV. Asegurate que rgb888_to_hsv use rangos h:[0..360), s,v:[0..1]
+    rgb888_to_hsv(r, g, b, h, s, v);
+
+    // Determinar nombre de color
+    obj.color = get_color_name(h, s, v);
   }
   return obj;
 }
@@ -853,20 +903,23 @@ Objeto analizar_objeto(int* labels, int label, int w, int h, uint16_t* rgb_buf) 
  * V: 0-1 (Valor/Brillo)
  */
 void rgb888_to_hsv(uint8_t r, uint8_t g, uint8_t b, float &h, float &s, float &v) {
+  // Normalizamos los valores
   float r_f = r / 255.0;
   float g_f = g / 255.0;
   float b_f = b / 255.0;
+  // Calculamos el máximo  y minimo entre R,G,B
   float cmax = max(r_f, max(g_f, b_f));
   float cmin = min(r_f, min(g_f, b_f));
-  float delta = cmax - cmin;
+  float delta = cmax - cmin; // Diferencia para calcular saturación y color
 
-  if (delta == 0) h = 0;
-  else if (cmax == r_f) h = 60 * fmod(((g_f - b_f) / delta), 6);
-  else if (cmax == g_f) h = 60 * (((b_f - r_f) / delta) + 2);
-  else h = 60 * (((r_f - g_f) / delta) + 4);
-  if (h < 0) h += 360.0;
-  s = (cmax == 0) ? 0 : (delta / cmax);
-  v = cmax;
+   if (delta == 0) h = 0;                    // Si no hay diferencia, el color es gris → Hue 0
+  else if (cmax == r_f) h = 60 * fmod(((g_f - b_f) / delta), 6);  // Hue en sector rojo
+  else if (cmax == g_f) h = 60 * (((b_f - r_f) / delta) + 2);     // Hue en sector verde
+  else h = 60 * (((r_f - g_f) / delta) + 4);                      // Hue en sector azul
+
+  if (h < 0) h += 360.0;                    // Asegurar hue dentro de [0..360]
+  s = (cmax == 0) ? 0 : (delta / cmax);     // Saturación normalizada
+  v = cmax;                                 // Valor = máximo de los RGB normalizados
 }
 
 /**
@@ -882,7 +935,6 @@ String get_color_name(float h, float s, float v) {
     return "Negro";
   }
 
-  // Ahora sí, cases de color según hue
   if (h < 75 || h >= 315) {
     return "Rojo";
   }
@@ -898,16 +950,16 @@ String get_color_name(float h, float s, float v) {
  * en la imagen original a color (RGB565).
  */
 String detectar_color_promedio(uint16_t* rgb565_buf, int w, int h, int cx, int cy, int sample_size = 5) {
-  if (cx < 0 || cy < 0) return "N/A";
+  if (cx < 0 || cy < 0) return "N/A"; // Si el centroide está fuera, no se puede medir color
 
-  long total_r = 0, total_g = 0, total_b = 0;
-  int count = 0;
+  long total_r = 0, total_g = 0, total_b = 0; // Acumuladores para promediar colores
+  int count = 0;                              // Cantidad de píxeles sumados
 
-  // Tomar un promedio de un cuadrado de (sample_size*2+1) x (sample_size*2+1)
+  // Recorrer un área cuadrada alrededor del centroide
   for (int y = cy - sample_size; y <= cy + sample_size; y++) {
     for (int x = cx - sample_size; x <= cx + sample_size; x++) {
       
-      // Asegurarse de no salirse de los bordes de la imagen
+      // Ignorar píxeles fuera de la imagen
       if (x < 0 || x >= w || y < 0 || y >= h) {
         continue;
       }
@@ -947,7 +999,9 @@ String detectar_color_promedio(uint16_t* rgb565_buf, int w, int h, int cx, int c
 
 // ===== FUNCIONES DE PROCESAMIENTO DE IMAGEN OPTIMIZADAS =====
 
-// ---- Filtro Gaussiano 3x3 ----
+// Aplica un blur Gaussiano 3x3 que suaviza la imagen reduciendo ruido y
+// variaciones bruscas entre píxeles. mantiene los bordes sin alterar.
+
 void aplicar_blur(uint8_t* src, uint8_t* dst, int width, int height) {
     // Kernel Gaussiano 3x3 normalizado (suma = 16)
     const int k[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
@@ -976,7 +1030,8 @@ void aplicar_blur(uint8_t* src, uint8_t* dst, int width, int height) {
     }
 }
 
-// ---- Binarización optimizada ----
+// Convierte la imagen a binaria según un umbral: valores > threshold se
+// fijan en 255 (blanco) y el resto en 0 (negro).
 void aplicar_binarizacion(uint8_t* src, uint8_t* dst, int width, int height, uint8_t threshold) {
     int len = width * height;
     uint8_t t = threshold;
@@ -986,7 +1041,9 @@ void aplicar_binarizacion(uint8_t* src, uint8_t* dst, int width, int height, uin
     }
 }
 
-// ---- Erosión optimizada ----
+// Aplica erosión 3x3 sobre la imagen binaria: solo mantiene un píxel como
+// objeto (0) si todos sus vecinos en la ventana 3x3 también son objeto.
+// Reduce ruido y adelgaza regiones pequeñas.
 void aplicar_erosion(uint8_t* src, uint8_t* dst, int width, int height) {
     int len = width * height;
     for (int i = 0; i < len; i++) dst[i] = 255;
@@ -1007,7 +1064,9 @@ void aplicar_erosion(uint8_t* src, uint8_t* dst, int width, int height) {
     }
 }
 
-// ---- Dilatación optimizada ----
+// Aplica dilatación 3x3 a la imagen binaria: un píxel se marca como objeto (0)
+// si al menos un vecino en la ventana 3x3 es objeto. Expande las regiones y
+// rellena pequeños huecos.
 void aplicar_dilatacion(uint8_t* src, uint8_t* dst, int width, int height) {
     int len = width * height;
     for (int i = 0; i < len; i++) dst[i] = 255;
@@ -1096,9 +1155,8 @@ void pintar_centroide_en_imagen(uint8_t* imagen_color, int width, int height, do
     }
 }
 
-// ===== SISTEMA DE FUENTE BITMAP SIMPLE (5x7 píxeles) =====
-
-// Función para obtener el patrón de un carácter específico
+// Función para obtener el patrón de un carácter específico 
+// para luego realizar la etiqueta
 void obtener_patron_caracter(char c, uint8_t patron[7]) {
     // Inicializar con ceros
     for (int i = 0; i < 7; i++) patron[i] = 0x00;
@@ -1149,6 +1207,7 @@ const char* obtener_abreviatura(const char* forma) {
 
     
    // Función para obtener color RGB según el nombre del color
+   // dependiendo el color de la figura va a ser el color del centroide y de la etiqueta
 void obtener_color_rgb(const char* color_nombre, uint8_t &r, uint8_t &g, uint8_t &b) {
     // Si es negro, usar blanco para que sea visible
     if (strcmp(color_nombre, "Negro") == 0) {
@@ -1156,22 +1215,18 @@ void obtener_color_rgb(const char* color_nombre, uint8_t &r, uint8_t &g, uint8_t
         return;
     }
     
-    // ⭐ IMPORTANTE: El ESP32 usa BGR, no RGB
-    // Por eso invertimos r y b en las asignaciones
-    
     if (strcmp(color_nombre, "Rojo") == 0) {
-        r = 0; g = 0; b = 255;  // BGR: Azul en r, Rojo en b
+        r = 0; g = 0; b = 255;  
     } else if (strcmp(color_nombre, "Azul") == 0) {
-        r = 255; g = 50; b = 0;  // BGR: Rojo en r, Azul en b
+        r = 255; g = 50; b = 0;  
     } else if (strncmp(color_nombre, "Blanco", 6) == 0 || strncmp(color_nombre, "Gris", 4) == 0) {
-        r = 200; g = 200; b = 200;  // Gris queda igual
+        r = 200; g = 200; b = 200;  
     } else {
-        // Color por defecto (blanco)
         r = 255; g = 255; b = 255;
     }
 }
 
-// Función para dibujar un carácter en la imagen
+// Función para dibujar un carácter en la imagen para el etiquetado
 void dibujar_caracter(uint8_t* imagen_color, int width, int height, 
                      int x_start, int y_start, char c, 
                      uint8_t r, uint8_t g, uint8_t b) {
@@ -1198,7 +1253,7 @@ void dibujar_caracter(uint8_t* imagen_color, int width, int height,
     }
 }
 
-// Función para dibujar texto
+// Función para dibujar la etiqueta
 void dibujar_texto(uint8_t* imagen_color, int width, int height,
                    int x, int y, const char* texto,
                    uint8_t r, uint8_t g, uint8_t b) {
@@ -1223,11 +1278,11 @@ void pintar_centroide_con_etiqueta(uint8_t* imagen_color, int width, int height,
         return;
     }
     
-    // Obtener color para el texto basado en el color del objeto
+    // Obtener color para el texto basado en el color de l figura
     uint8_t text_r, text_g, text_b;
     obtener_color_rgb(color_nombre, text_r, text_g, text_b);
     
-    // Pintar cruz del centroide (en el color del objeto)
+    // Pintar cruz del centroide (en el color de la figura)
     int cross_size = 6;
     for (int i = -cross_size; i <= cross_size; i++) {
         // Línea horizontal
@@ -1269,15 +1324,17 @@ void pintar_centroide_con_etiqueta(uint8_t* imagen_color, int width, int height,
     dibujar_texto(imagen_color, width, height, text_x, text_y, 
                  abreviatura, text_r, text_g, text_b);
 }
-// ===== MOMENTOS DE HU CORREGIDOS (CON RECORTE) =====
+// ===== MOMENTOS DE HU CORREGIDOS =====
+// Calcula los 7 momentos de Hu del objeto binario (ignorando los bordes) para
+// obtener descriptores invariantes usados para reconocer y comparar formas.
+// También calcula el centroide opcional y descarta objetos muy pequeños.
+
 void calcular_momentos_hu_corregido(uint8_t* imagen_binaria, int width, int height, double hu[7], double* cx_out = nullptr, double* cy_out = nullptr) {
     double m00 = 0, m10 = 0, m01 = 0;
     
-    // --- ¡NUEVO! Definir un margen para ignorar los bordes ---
-    // Ajusta este valor (en píxeles) según sea necesario
+    // Definimos un margen para ignorar los bordes ---
     const int CROP_MARGIN = 10; 
 
-    // --- CAMBIO AQUÍ ---
     // Calcular momentos espaciales (ignorando los márgenes)
     for (int y = CROP_MARGIN; y < height - CROP_MARGIN; y++) {
         for (int x = CROP_MARGIN; x < width - CROP_MARGIN; x++) {
@@ -1308,11 +1365,9 @@ void calcular_momentos_hu_corregido(uint8_t* imagen_binaria, int width, int heig
     double mu20 = 0, mu02 = 0, mu11 = 0;
     double mu30 = 0, mu03 = 0, mu21 = 0, mu12 = 0;
 
-    // --- CAMBIO AQUÍ ---
     // Calcular momentos centrales (ignorando los márgenes)
     for (int y = CROP_MARGIN; y < height - CROP_MARGIN; y++) {
         for (int x = CROP_MARGIN; x < width - CROP_MARGIN; x++) {
-    // --- FIN DEL CAMBIO ---
             if (imagen_binaria[y * width + x] == 0) {
                 double dx = (x - cx);
                 double dy = (y - cy);
@@ -1328,8 +1383,6 @@ void calcular_momentos_hu_corregido(uint8_t* imagen_binaria, int width, int heig
         }
     }
     
-    // ... (El resto de la función para calcular Hu[0] a Hu[6] no cambia) ...
-    // ✅ NORMALIZACIÓN CORRECTA para invarianza a escala
     double area_sq = m00 * m00;
     double area_5_2 = pow(m00, 2.5);
     
@@ -1367,10 +1420,15 @@ void calcular_momentos_hu_corregido(uint8_t* imagen_binaria, int width, int heig
 
 
 // ===== SIMILITUD MEJORADA CON PESOS INTELIGENTES =====
+// Calcula la similitud entre dos conjuntos de momentos de Hu usando distancia
+// ponderada: privilegia los momentos más estables (como Hu1) y reduce el peso
+// de los más ruidosos. Convierte la distancia en una similitud 0–1 para poder
+// comparar y clasificar qué tan parecidas son dos figuras.
+
 double calcular_similitud_hu_optimizada(double hu1[7], double hu2[7]) {
     // Pesos basados en estabilidad de los momentos
     // Hu1 y Hu2 son más estables, Hu3-Hu7 más sensibles
-    double pesos[7] = {1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    double pesos[7] = {1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // Pesos de cada momento
     
     double distancia_ponderada = 0.0;
     double suma_pesos = 0.0;
@@ -1394,36 +1452,12 @@ double calcular_similitud_hu_optimizada(double hu1[7], double hu2[7]) {
     return fmax(0.0, fmin(1.0, simil));
 }
 
-/*// ===== SIMILITUD MEJORADA (VERSIÓN SIMPLIFICADA) =====
-double calcular_similitud_hu_optimizada(double hu1[7], double hu2[7]) {
-    // hu1 = Objeto en vivo (calculado)
-    // hu2 = Objeto calibrado (guardado)
-
-    double distancia_total = 0.0;
-
-    // Pesos (igual que antes)
-    double pesos[7] = {1.0, 0.8, 0.3, 0.2, 0.0, 0.1, 0.00};
-    double suma_pesos = 2.55; // Suma de los pesos de arriba
-
-    for (int i = 0; i < 7; i++) {
-        // Calcular la diferencia absoluta (simple)
-        double diff = fabs(hu1[i] - hu2[i]);
-
-        // Ponderar la diferencia
-        distancia_total += diff * pesos[i];
-    }
-
-    // Normalizar la distancia por los pesos
-    double distancia_normalizada = distancia_total / suma_pesos;
-
-    // Convertir a similitud [0-1] con curva exponencial
-    // (HU_SIM_SCALE = 0.3f, definido al inicio)
-    double simil = exp(-distancia_normalizada / HU_SIM_SCALE);
-    return fmax(0.0, fmin(1.0, simil));
-}
-
-*/
 // ===== DETECCIÓN MEJORADA =====
+// Detecta la figura presente en la imagen binaria comparando sus momentos de
+// Hu con las figuras previamente calibradas. Calcula el centroide, obtiene la
+// similitud contra cada figura conocida y devuelve la mejor coincidencia junto
+// con su nivel de confianza.
+
 void detectar_figura_mejorada(uint8_t* imagen_binaria, int width, int height, char* figura, double* confianza) {
     double hu_actual[7];
     double cx, cy;
@@ -1467,6 +1501,11 @@ void detectar_figura_mejorada(uint8_t* imagen_binaria, int width, int height, ch
 }
 
 // ===== CALIBRACIÓN CON MÚLTIPLES MUESTRAS =====
+// Calibra una figura tomando varias muestras reales desde la cámara.
+// Convierte cada frame a gris, aplica filtros, calcula los momentos de Hu y
+// promedia solo las muestras válidas. Guarda la firma promedio para poder
+// reconocer la figura luego con mayor estabilidad y precisión.
+
 bool calibrar_con_promedio(int figure_id) {
     const int MUESTRAS_CALIBRACION = 10; // Reducido para mejor rendimiento
     double hu_acum[7] = {0};
@@ -1543,8 +1582,6 @@ bool calibrar_con_promedio(int figure_id) {
         free(grayscale);
         free(rgb565);
         esp_camera_fb_return(fb);
-        //delay(200); // Pausa entre muestras
-        // --- ¡NUEVO! PAUSA PARA MOVER EL OBJETO ---
         if (muestra < MUESTRAS_CALIBRACION - 1) { // No pausar después de la última muestra
           Serial.printf("  >> MUEVA EL OBJETO. Próxima muestra en 5 segundos...\n");
           delay(5000); // 5 segundos de pausa
@@ -1574,6 +1611,10 @@ bool calibrar_con_promedio(int figure_id) {
 }
 
 // ===== FUNCIÓN PARA CONFIGURAR CORS =====
+// Configura los encabezados CORS para permitir que la API sea accesible
+// desde cualquier origen (GET, POST y OPTIONS), habilitando interacción
+// con aplicaciones web externas.
+
 static void set_cors_headers(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -1582,7 +1623,6 @@ static void set_cors_headers(httpd_req_t *req) {
 
 // ===== ENDPOINTS =====
 
-// Endpoint: /status (GET) - Modificado para compatibilidad con app Svelte
 static esp_err_t status_handler(httpd_req_t *req) {
     set_cors_headers(req);
     
@@ -1723,7 +1763,7 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
             grayscale_len = fb->width * fb->height;
             grayscale = (uint8_t*)ps_malloc(grayscale_len);
             rgb_buffer = (uint8_t*)ps_malloc(grayscale_len * 3); // RGB888
-            rgb565_buffer = (uint8_t*)ps_malloc(grayscale_len * 2); // <-- MEMORIA ASIGNADA AQUÍ
+            rgb565_buffer = (uint8_t*)ps_malloc(grayscale_len * 2); 
             if (grayscale && rgb_buffer) {
                 buffers_initialized = true;
                 Serial.println("✅ Buffers de Stream listos.");
@@ -1739,8 +1779,6 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
         }
 
         if (fb->format == PIXFORMAT_JPEG && buffers_initialized) {
-            //size_t rgb565_len = fb->width * fb->height * 2;
-            //uint8_t* rgb565_buffer = (uint8_t*)ps_malloc(rgb565_len);
             
             if (rgb565_buffer && jpg2rgb565(fb->buf, fb->len, rgb565_buffer, JPG_SCALE_NONE)) {
                 // Conversión RGB565 a Grayscale
@@ -1753,14 +1791,7 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                     grayscale[i] = (uint8_t)(0.299 * r + 0.587 * g + 0.114 * b);
                 }
 
-                // 🔥 PROCESAMIENTO OPTIMIZADO: Solo filtros esenciales
                 aplicar_filtros_completos(grayscale, grayscale, fb->width, fb->height, threshold_value);
-                
-                // 🔥 Detección cada 3 frames para mejor rendimiento
-                //static int frame_count = 0;
-                //if (frame_count++ % 3 == 0) {
-                 //   detectar_figura_mejorada(grayscale, fb->width, fb->height, ultima_figura, &ultima_confianza);
-                //}
 
                 // === DETECCIÓN DE MÚLTIPLES OBJETOS ===
                 memset(labels, 0, sizeof(int) * fb->width * fb->height);
@@ -1769,8 +1800,6 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                 
                 const int CROP_MARGIN = 10; // Definimos el margen
                 for (int y = CROP_MARGIN; y < fb->height - CROP_MARGIN; y++) { // Añadido margen
-                /*for (int y = 0; y < fb->height; y++) {*/
-                  //for (int x = 0; x < fb->width; x++) {
                   for (int x = CROP_MARGIN; x < fb->width - CROP_MARGIN; x++) { // Añadido margen
                     // Busca un píxel de objeto (NEGRO) que no haya sido visitado
                     if (grayscale[y * fb->width + x] == 0 && labels[y * fb->width + x] == 0) {
@@ -1780,7 +1809,6 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
 
                       // 2. Analizamos el objeto que acabamos de pintar
                       if (num_objetos < MAX_OBJETOS) {
-                        // Llama a tu 'analizar_objeto' (modificado con Hu Moments)
                         Objeto obj = analizar_objeto(labels, label_actual, fb->width, fb->height,(uint16_t*)rgb565_buffer); 
 
                         if (obj.forma != "RUIDO") {
@@ -1796,7 +1824,6 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                 delay(50);
 
                                 // --- Actualizar datos para el stream ---
-                // ESTO DEBE ESTAR JUSTO DESPUÉS DE LA DETECCIÓN DE OBJETOS
                 if (num_objetos > 0) {
                     // Tomar el primer objeto detectado (o el más grande si quieres)
                     strncpy(ultima_figura, objetos_detectados[0].forma.c_str(), 19);
@@ -1819,7 +1846,7 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                     ultimo_cx = -1;
                     ultimo_cy = -1;
                 }
-                // --- Enviar evento SSE con la detección para actualizar la UI en tiempo real ---
+                // --- Enviar evento SSE con la detección para actualizar la UI ---
 {
     // Preparar campos de bbox y frame (si hay objetos detectados)
     int x_min = -1, y_min = -1, x_max = -1, y_max = -1;
@@ -1834,7 +1861,7 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
     }
 
     char sse_json[256];
-    // Asegúrate de no exceder el tamaño del buffer (ajusta 256 si necesitás más)
+    // Asegúrate de no exceder el tamaño del buffer
     int n = snprintf(sse_json, sizeof(sse_json),
         "{\"figura\":\"%s\",\"color\":\"%s\",\"confianza\":%.2f,\"cx\":%d,\"cy\":%d,"
         "\"frame_width\":%d,\"frame_height\":%d,\"x_min\":%d,\"y_min\":%d,\"x_max\":%d,\"y_max\":%d}",
@@ -1860,8 +1887,8 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                 }
                 
 
-                // AGREGADO PARA MULTIPLES OBJETOS
-                // AGREGADO PARA MULTIPLES OBJETOS CON ETIQUETAS
+
+                // Por cada objeto agregar centroide y etiqueta
                 for (int i = 0; i < num_objetos; i++) {
                   if (objetos_detectados[i].centro_x >= 0 && objetos_detectados[i].centro_y >= 0) {
                     pintar_centroide_con_etiqueta(rgb_buffer, fb->width, fb->height, 
@@ -1874,7 +1901,7 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                                 
                 Serial.println("\n=== OBJETOS DETECTADOS ===");
                 for (int i = 0; i < num_objetos; i++) {
-                   Serial.printf("Objeto %d: Forma=%s  Color=%s  Centro=(%d,%d)\n",
+                   Serial.printf("Objeto %d: Forma=%s  Color=%s  Centro=(%d,%d)\n", // Se imprime en monitor serie las figuras detectadas con su color y centroide
                    i+1,
                    objetos_detectados[i].forma.c_str(),
                    objetos_detectados[i].color.c_str(),
@@ -1906,9 +1933,7 @@ static esp_err_t processed_stream_handler(httpd_req_t *req) {
                     send_fallback_frame(req, fb);
                 }
                 
-               // free(rgb565_buffer);
             } else {
-               // if (rgb565_buffer) free(rgb565_buffer);
                 send_fallback_frame(req, fb);
             }
         } else {
@@ -2032,25 +2057,6 @@ static esp_err_t calibrate_handler(httpd_req_t *req) {
 }
 
 
-/*
-// Endpoint: /detect (GET)
-static esp_err_t detect_handler(httpd_req_t *req) {
-    set_cors_headers(req);
-
-    StaticJsonDocument<256> doc;
-    doc["figura"] = ultima_figura;
-    doc["color"] = ultimo_color;  // <-- AGREGADO
-    doc["confianza"] = ultima_confianza;
-    doc["centroide_x"] = ultimo_cx;
-    doc["centroide_y"] = ultimo_cy;
-    
-    String response;
-    serializeJson(doc, response);
-    
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_send(req, response.c_str(), response.length());
-}
-*/
 
 // Endpoint: /detect (GET) - Devuelve todos los objetos detectados
 static esp_err_t detect_handler(httpd_req_t *req) {
@@ -2199,7 +2205,7 @@ void startCameraServer() {
     
 
 
-    // 🚀 INICIO DEL SERVIDOR
+    // INICIO DEL SERVIDOR
     if (httpd_start(&camera_httpd, &config) == ESP_OK) {
 
         httpd_register_uri_handler(camera_httpd, &status_uri);
@@ -2209,8 +2215,6 @@ void startCameraServer() {
         httpd_register_uri_handler(camera_httpd, &detect_uri);
         httpd_register_uri_handler(camera_httpd, &data_uri);
         httpd_register_uri_handler(camera_httpd, &index_uri);
-
-        // 🔥🔥🔥 PEGÁ ESTO ACÁ 🔥🔥🔥
         sse_init_clients();
 
         httpd_uri_t sse_uri = {
@@ -2221,8 +2225,6 @@ void startCameraServer() {
         };
         httpd_register_uri_handler(camera_httpd, &sse_uri);
         httpd_register_uri_handler(camera_httpd, &capture_uri);
-        // 🔥🔥🔥 FIN DEL CÓDIGO A PEGAR 🔥🔥🔥
-
         Serial.println("✅ Servidor web iniciado correctamente");
     } else {
         Serial.println("❌ Error iniciando servidor web");
@@ -2240,7 +2242,7 @@ static esp_err_t capture_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
     
-    // Procesar el frame (similar a processed_stream_handler pero sin loop)
+    // Procesar el frame (similar a processed_stream_handler)
     size_t grayscale_len = fb->width * fb->height;
     uint8_t* grayscale = (uint8_t*)ps_malloc(grayscale_len);
     uint8_t* rgb_buffer = (uint8_t*)ps_malloc(grayscale_len * 3);
@@ -2333,10 +2335,10 @@ void setup() {
     delay(1000);
     
     Serial.println("\n╔══════════════════════════════════════╗");
-    Serial.println("║  ESP32-CAM DETECTOR OPTIMIZADO      ║");
-    Serial.println("║   MOMENTOS HU MEJORADOS             ║");
-    Serial.println("║   FLOOD FILL       MAX     CROP Tomas      ║");
-    Serial.println("╚══════════════════════════════════════╝\n");
+    Serial.println("  ║   ESP32-CAM DETECTOR OPTIMIZADO      ║");
+    Serial.println("  ║   MOMENTOS HU MEJORADOS              ║");
+    Serial.println("  ║   FLOOD FILL   MAX OBJETOS = 4       ║");
+    Serial.println("  ╚══════════════════════════════════════╝\n");
     
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     
@@ -2372,7 +2374,7 @@ void setup() {
         Serial.printf("✅ PSRAM: %d KB libres\n", ESP.getFreePsram() / 1024);
     }
     
-    // Configuración cámara
+    // Configuración de pines de la cámara
     camera_config_t config;
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer = LEDC_TIMER_0;
@@ -2394,7 +2396,7 @@ void setup() {
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
     config.pixel_format = PIXFORMAT_JPEG;
-    config.frame_size = FRAMESIZE_QVGA;   // 320x240
+    config.frame_size = FRAMESIZE_QVGA;   // rESOLUCION: 320x240
     config.jpeg_quality = 10;              // Calidad media-baja
     config.fb_count = 2;
     
@@ -2416,22 +2418,14 @@ void setup() {
    size_t buf_len = 320 * 240;
    imagen_procesada = (uint8_t*)ps_malloc(buf_len);
   
-   // --- ¡ESTA ES LA LÍNEA CRÍTICA QUE FALTABA! ---
    labels = (int*)ps_malloc(buf_len * sizeof(int));
-    // ---------------------------------------------
 
-  if (!imagen_procesada || !labels) { // Chequeo mejorado
+  if (!imagen_procesada || !labels) { // Chequeo 
     Serial.println("❌ Error crítico asignando buffers - Reiniciando...");
     ESP.restart();
   }
   Serial.println("✅ Buffers de procesamiento listos");
     
-  /*  if (imagen_procesada) {
-        Serial.println("✅ Buffer de procesamiento listo");
-    } else {
-        Serial.println("❌ Error crítico buffer - Reiniciando...");
-        ESP.restart();
-    }*/
     
     startCameraServer();
     
